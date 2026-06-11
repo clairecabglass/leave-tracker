@@ -1,14 +1,11 @@
 import { useState, useMemo } from 'react'
 import { UserPlus, Trash2, Shield, User, Download, SlidersHorizontal } from 'lucide-react'
 import { useAuth, ROLES } from '../context/AuthContext'
-import { useLeave, STATUS } from '../context/LeaveContext'
+import { useLeave } from '../context/LeaveContext'
 import { balancesFor } from '../leaveCalc'
+import { downloadMonthlyPdf } from '../monthlyReport'
 
 const num = (v) => Number(v) || 0
-const csvCell = (v) => {
-  const s = String(v ?? '')
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-}
 
 export default function AdminPage() {
   const { user, users, addUser, updateUser, deleteUser } = useAuth()
@@ -55,31 +52,15 @@ export default function AdminPage() {
     patch(u.id, adjustKey, adjustNew)
   }
 
-  const downloadReport = () => {
-    const [y, m] = reportMonth.split('-').map(Number)
-    const monthStart = new Date(y, m - 1, 1)
-    const monthEnd = new Date(y, m, 0)
-    const rows = requests
-      .filter(r => r.status === STATUS.APPROVED)
-      .filter(r => { const s = new Date(r.startDate), e = new Date(r.endDate); return e >= monthStart && s <= monthEnd })
-      .sort((a, b) => a.employeeName.localeCompare(b.employeeName) || new Date(a.startDate) - new Date(b.startDate))
-    const header = ['Employee', 'Leave type', 'From', 'To', 'Days']
-    const body = rows.map(r => [
-      r.employeeName,
-      r.type === 'Other' && r.otherLabel ? `Other - ${r.otherLabel}` : r.type,
-      r.startDate, r.endDate, r.days,
-    ])
-    const total = rows.reduce((s, r) => s + num(r.days), 0)
-    body.push([])
-    body.push(['', '', '', 'Total days', total])
-    const csv = [header, ...body].map(cols => cols.map(csvCell).join(',')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `CabGlass-Leave-${reportMonth}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+  const [downloading, setDownloading] = useState(false)
+  const downloadReport = async () => {
+    setDownloading(true)
+    try {
+      await downloadMonthlyPdf({ month: reportMonth, users, requests })
+    } catch (err) {
+      flash(setError, 'Could not build the report.')
+      console.error('Report failed:', err)
+    } finally { setDownloading(false) }
   }
 
   return (
@@ -94,16 +75,19 @@ export default function AdminPage() {
       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6 flex flex-col sm:flex-row sm:items-end gap-4">
         <div>
           <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100"><Download size={18} className="text-brand-dark" /> Monthly leave report</h2>
-          <p className="text-xs text-slate-400 mt-1">All approved leave <span className="font-semibold">taken</span> in the chosen month — name, dates and days. Downloads as a CSV (opens in Excel).</p>
+          <p className="text-xs text-slate-400 mt-1">A branded PDF: each employee with the days of leave <span className="font-semibold">taken</span> per type that month.</p>
         </div>
         <div className="flex items-end gap-2 sm:ml-auto">
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Month</label>
             <input type="month" value={reportMonth} onChange={e => setReportMonth(e.target.value)} className={inputCls} />
           </div>
-          <button onClick={downloadReport} style={{ backgroundColor: '#FECD28' }}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[#111111] hover:brightness-95 transition-all">
-            <Download size={15} /> Download
+          <button onClick={downloadReport} disabled={downloading} style={{ backgroundColor: '#FECD28' }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[#111111] disabled:opacity-50 hover:brightness-95 transition-all">
+            {downloading
+              ? <span className="w-4 h-4 border-2 border-[#111111]/30 border-t-[#111111] rounded-full animate-spin" />
+              : <Download size={15} />}
+            {downloading ? 'Building…' : 'Download PDF'}
           </button>
         </div>
       </div>
