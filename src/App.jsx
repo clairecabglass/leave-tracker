@@ -8,7 +8,6 @@ import ApplyPage from './components/ApplyPage'
 import ApprovalsPage from './components/ApprovalsPage'
 import SickNotesPage from './components/SickNotesPage'
 import CalendarPage from './components/CalendarPage'
-import PPPage from './components/PPPage'
 import AdminPage from './components/AdminPage'
 
 function Portal() {
@@ -29,7 +28,6 @@ function Portal() {
     : activeTab === 'approvals' && (isApprover || isAdmin) ? <ApprovalsPage />
     : activeTab === 'sicknotes' ? <SickNotesPage />
     : activeTab === 'calendar' ? <CalendarPage />
-    : activeTab === 'pp' ? <PPPage />
     : <ApplyPage />
 
   return (

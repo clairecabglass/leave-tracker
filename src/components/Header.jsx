@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef } from 'react'
-import { Moon, Sun, LogOut, ChevronDown, CalendarDays, BookText, Users } from 'lucide-react'
+import { Moon, Sun, LogOut, ChevronDown, CalendarDays, BookText, Users, ExternalLink } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 // Sub-pages that live under the "Leave" dropdown.
 const LEAVE_TABS = ['apply', 'approvals', 'sicknotes']
 const LABELS = {
   apply: 'Apply', approvals: 'Approvals', sicknotes: 'Sick Notes',
-  calendar: 'Calendar', pp: 'P&P', admin: 'Admin',
+  calendar: 'Calendar', admin: 'Admin',
 }
+
+// Policies & Processes — opens the Google Drive folder in a new tab.
+const PP_URL = 'https://drive.google.com/drive/u/0/folders/1QSfbreN1-gr1uJRWVyr0P9s0yn0kK0Ii'
 
 export default function Header({ activeTab, setActiveTab, dark, toggleDark }) {
   const { user, logout, isAdmin, isApprover } = useAuth()
@@ -28,7 +31,7 @@ export default function Header({ activeTab, setActiveTab, dark, toggleDark }) {
 
   const flatTabs = [
     { key: 'calendar', label: 'Calendar', icon: CalendarDays, show: true },
-    { key: 'pp',       label: 'P&P',      icon: BookText,     show: true },
+    { key: 'pp',       label: 'P&P',      icon: BookText,     show: true, href: PP_URL },
     { key: 'admin',    label: 'Admin',    icon: Users,        show: isAdmin },
   ].filter(t => t.show)
 
@@ -70,7 +73,15 @@ export default function Header({ activeTab, setActiveTab, dark, toggleDark }) {
               )}
             </div>
 
-            {flatTabs.map(({ key, label, icon: Icon }) => {
+            {flatTabs.map(({ key, label, icon: Icon, href }) => {
+              if (href) {
+                return (
+                  <a key={key} href={href} target="_blank" rel="noreferrer" className={btnCls(false)} title="Opens in a new tab">
+                    <Icon size={15} /> <span className="hidden sm:inline">{label}</span>
+                    <ExternalLink size={11} className="opacity-60" />
+                  </a>
+                )
+              }
               const active = activeTab === key
               return (
                 <button key={key} onClick={() => setActiveTab(key)}

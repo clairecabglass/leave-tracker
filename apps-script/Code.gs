@@ -14,12 +14,11 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-06-leave-v2';
+var VERSION = '2026-06-leave-v3';
 
-// Drive folder where uploaded sick notes are saved. Leave blank until you have
-// the folder ID; while blank, uploads still record the file name + uploader but
-// no file is stored.
-var SICK_NOTES_FOLDER_ID = '';
+// Drive folder where uploaded sick notes are saved. While blank, uploads still
+// record the file name + uploader but no file is stored.
+var SICK_NOTES_FOLDER_ID = '1W-YitHNqNpTKcHMgaVWakSXju5z4mmPO';
 
 var USERS_SHEET = 'Users';
 var REQUESTS_SHEET = 'LeaveRequests';
