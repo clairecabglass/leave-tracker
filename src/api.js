@@ -35,3 +35,4 @@ export const apiUpdateUser   = (id, patch) => apiPost('updateUser', { id, patch 
 export const apiDeleteUser   = (id) => apiPost('deleteUser', { id })
 export const apiUploadSickNote = (note) => apiPost('uploadSickNote', { note })
 export const apiDeleteSickNote = (id) => apiPost('deleteSickNote', { id })
+export const apiFinalizeMonth = (payload) => apiPost('finalizeMonth', payload)

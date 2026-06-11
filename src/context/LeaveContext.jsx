@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { LIVE, fetchData, apiSubmitRequest, apiDecideRequest, apiCancelRequest, apiUploadSickNote, apiDeleteSickNote } from '../api'
+import { workingDays } from '../workdays'
 
 const LeaveContext = createContext(null)
 
@@ -15,11 +16,10 @@ export const STATUS = {
 const REQUESTS_KEY = 'leave_requests'
 const NOTES_KEY = 'leave_sicknotes'
 
-export function countDays(startDate, endDate) {
-  if (!startDate || !endDate) return 0
-  const a = new Date(startDate), b = new Date(endDate)
-  if (isNaN(a) || isNaN(b) || b < a) return 0
-  return Math.round((b - a) / 86400000) + 1
+// Leave counts WORKING days (excludes weekends + SA public holidays); `half`
+// makes a single working day count as 0.5.
+export function countDays(startDate, endDate, half = false) {
+  return workingDays(startDate, endDate, half)
 }
 
 function loadList(key) {
@@ -44,7 +44,7 @@ export function LeaveProvider({ children }) {
   }
   useEffect(() => { refresh() }, [])
 
-  const submitRequest = ({ employee, type, otherLabel, startDate, endDate, reason }) => {
+  const submitRequest = ({ employee, type, otherLabel, startDate, endDate, reason, halfDay }) => {
     const req = {
       id: Date.now(),
       employeeId: employee.id,
@@ -53,7 +53,8 @@ export function LeaveProvider({ children }) {
       type,
       otherLabel: type === 'Other' ? (otherLabel || '').trim() : '',
       startDate, endDate,
-      days: countDays(startDate, endDate),
+      halfDay: !!halfDay,
+      days: countDays(startDate, endDate, halfDay),
       reason: (reason || '').trim(),
       status: STATUS.PENDING,
       submittedAt: new Date().toISOString(),

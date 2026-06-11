@@ -30,18 +30,29 @@ export default function ApplyPage() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [reason, setReason] = useState('')
+  const [halfDay, setHalfDay] = useState(false)
   const [msg, setMsg] = useState('')
 
   const mine = useMemo(() => requests.filter(r => r.employeeId === user.id), [requests, user.id])
   const bal = useMemo(() => balancesFor(user, requests), [user, requests])
-  const days = countDays(startDate, endDate)
+  const singleDay = !!startDate && startDate === endDate
+  const days = countDays(startDate, endDate, halfDay && singleDay)
+
+  // Remaining balance for the type being requested (null = not tracked).
+  const remainingFor = {
+    Annual: bal.annual.remaining,
+    Sick: bal.sick.remaining,
+    'Family Responsibility': bal.family.remaining,
+  }
+  const remaining = remainingFor[type]
+  const overBalance = remaining != null && days > remaining
 
   const submit = (e) => {
     e.preventDefault()
-    if (days < 1) { setMsg('Please pick a valid date range.'); return }
+    if (days < 1) { setMsg('Please pick valid working dates.'); return }
     if (type === 'Other' && !otherLabel.trim()) { setMsg('Please specify the type of leave.'); return }
-    submitRequest({ employee: user, type, otherLabel, startDate, endDate, reason })
-    setType(LEAVE_TYPES[0]); setOtherLabel(''); setStartDate(''); setEndDate(''); setReason('')
+    submitRequest({ employee: user, type, otherLabel, startDate, endDate, reason, halfDay: halfDay && singleDay })
+    setType(LEAVE_TYPES[0]); setOtherLabel(''); setStartDate(''); setEndDate(''); setReason(''); setHalfDay(false)
     setMsg('Leave request submitted to ' + (user.approverId ? userName(user.approverId) : 'an admin') + '.')
     setTimeout(() => setMsg(''), 4000)
   }
@@ -95,15 +106,30 @@ export default function ApplyPage() {
                   <input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} required className={inputCls} />
                 </div>
               </div>
+              {singleDay && (
+                <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer">
+                  <input type="checkbox" checked={halfDay} onChange={e => setHalfDay(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand/40" />
+                  Half day (½)
+                </label>
+              )}
               <div>
                 <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Notes</label>
                 <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} placeholder="Add any notes for your approver" className={inputCls + ' resize-none'} />
               </div>
               {days > 0 && (
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                  Total: <span className="font-semibold text-slate-700 dark:text-slate-200">{days} day{days !== 1 ? 's' : ''}</span>
-                  <span className="text-slate-400"> · approver: {user.approverId ? userName(user.approverId) : 'admin'}</span>
-                </p>
+                <div className="text-sm space-y-1">
+                  <p className="text-slate-500 dark:text-slate-400">
+                    Total: <span className="font-semibold text-slate-700 dark:text-slate-200">{days} working day{days !== 1 ? 's' : ''}</span>
+                    {remaining != null && <span className="text-slate-400"> · {remaining} left</span>}
+                    <span className="text-slate-400"> · approver: {user.approverId ? userName(user.approverId) : 'admin'}</span>
+                  </p>
+                  {overBalance && (
+                    <p className="text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2">
+                      ⚠️ This is {(+(days - remaining).toFixed(2))} day{days - remaining !== 1 ? 's' : ''} more {type} leave than you have left ({remaining}). You can still submit — your approver will see this.
+                    </p>
+                  )}
+                </div>
               )}
               {msg && <p className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</p>}
               <button type="submit" style={{ backgroundColor: '#FECD28' }}

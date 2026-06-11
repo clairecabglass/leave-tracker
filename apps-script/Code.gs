@@ -14,21 +14,30 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-06-leave-v3';
+var VERSION = '2026-06-leave-v4';
 
 // Drive folder where uploaded sick notes are saved. While blank, uploads still
 // record the file name + uploader but no file is stored.
 var SICK_NOTES_FOLDER_ID = '1W-YitHNqNpTKcHMgaVWakSXju5z4mmPO';
 
+// Finalize-month: where the monthly PDF is saved, and who it's emailed to.
+// REPORTS_FOLDER_ID can reuse a Drive folder; ACCOUNTANTS_EMAIL can be one or
+// several comma-separated addresses. The admin can also type recipients in the
+// UI, which overrides ACCOUNTANTS_EMAIL for that send.
+var REPORTS_FOLDER_ID = '';
+var ACCOUNTANTS_EMAIL = '';
+
 var USERS_SHEET = 'Users';
 var REQUESTS_SHEET = 'LeaveRequests';
 var SICKNOTES_SHEET = 'SickNotes';
+var REPORTS_SHEET = 'MonthlyReports';
 
 var USER_COLS = ['id', 'name', 'username', 'password', 'role', 'approverId', 'startDate',
   'annualAdjust', 'sickAdjust', 'familyAdjust'];
 var REQUEST_COLS = ['id', 'employeeId', 'employeeName', 'approverId', 'type', 'otherLabel',
-  'startDate', 'endDate', 'days', 'reason', 'status', 'submittedAt', 'decidedBy', 'decidedAt', 'decisionNote'];
+  'startDate', 'endDate', 'days', 'reason', 'status', 'submittedAt', 'decidedBy', 'decidedAt', 'decisionNote', 'halfDay'];
 var SICKNOTE_COLS = ['id', 'employeeId', 'employeeName', 'label', 'fileName', 'uploadedAt', 'link'];
+var REPORT_COLS = ['month', 'finalizedBy', 'finalizedAt', 'driveLink', 'emailedTo'];
 
 // ── Entry points ────────────────────────────────────────────────────────────
 
@@ -38,7 +47,7 @@ function doGet(e) {
     if (action === 'ping') return json_({ ok: true, version: VERSION });
     if (!secretOk_(e.parameter && e.parameter.secret)) return json_({ error: 'Unauthorized' });
     if (action === 'getData') {
-      return json_({ ok: true, users: readUsersSafe_(), requests: readRequests_(), sickNotes: readSickNotes_() });
+      return json_({ ok: true, users: readUsersSafe_(), requests: readRequests_(), sickNotes: readSickNotes_(), reports: readReports_() });
     }
     return json_({ error: 'Unknown action: ' + action });
   } catch (err) {
@@ -63,6 +72,7 @@ function doPost(e) {
       case 'deleteUser':     return json_(deleteUser_(body.id));
       case 'uploadSickNote': return json_(uploadSickNote_(body.note));
       case 'deleteSickNote': return json_(deleteSickNote_(body.id));
+      case 'finalizeMonth':  return json_(finalizeMonth_(body));
       default:               return json_({ error: 'Unknown action: ' + body.action });
     }
   } catch (err) {
@@ -176,10 +186,52 @@ function uploadSickNote_(note) {
 
 function deleteSickNote_(id) { return deleteRowById_(SICKNOTES_SHEET, id); }
 
+// ── Finalize month ──────────────────────────────────────────────────────────
+// Saves the supplied (client-built) PDF to Drive, emails it to the accountants,
+// and logs the action. body = { month, monthLabel, pdfBase64, fileName,
+// finalizedBy, recipients }.
+function finalizeMonth_(body) {
+  if (!body.pdfBase64) return { error: 'No report attached.' };
+  var bytes = Utilities.base64Decode(body.pdfBase64);
+  var blob = Utilities.newBlob(bytes, 'application/pdf', body.fileName || ('Leave-' + body.month + '.pdf'));
+
+  var driveLink = '';
+  if (REPORTS_FOLDER_ID) {
+    var file = DriveApp.getFolderById(REPORTS_FOLDER_ID).createFile(blob);
+    driveLink = file.getUrl();
+  }
+
+  var recipients = (body.recipients || ACCOUNTANTS_EMAIL || '').trim();
+  var emailedTo = '';
+  if (recipients) {
+    MailApp.sendEmail({
+      to: recipients,
+      subject: 'CabGlass leave report — ' + (body.monthLabel || body.month),
+      body: 'Attached is the finalised leave report for ' + (body.monthLabel || body.month) + '.\n\n'
+        + 'Finalised by ' + (body.finalizedBy || 'admin') + '.'
+        + (driveLink ? '\nDrive copy: ' + driveLink : ''),
+      attachments: [blob],
+    });
+    emailedTo = recipients;
+  }
+
+  if (!driveLink && !emailedTo) {
+    return { error: 'Nothing configured: set REPORTS_FOLDER_ID and/or enter recipient email(s).' };
+  }
+
+  sheet_(REPORTS_SHEET).appendRow([
+    body.month, body.finalizedBy || '', new Date().toISOString(), driveLink, emailedTo,
+  ]);
+  return { ok: true, driveLink: driveLink, emailedTo: emailedTo };
+}
+
 // ── Sheet helpers ───────────────────────────────────────────────────────────
 
 function headerFor_(name) {
-  return name === USERS_SHEET ? USER_COLS : name === REQUESTS_SHEET ? REQUEST_COLS : SICKNOTE_COLS;
+  if (name === USERS_SHEET) return USER_COLS;
+  if (name === REQUESTS_SHEET) return REQUEST_COLS;
+  if (name === SICKNOTES_SHEET) return SICKNOTE_COLS;
+  return REPORT_COLS;
 }
 
 function sheet_(name) {
@@ -251,6 +303,10 @@ function readSickNotes_() {
   });
 }
 
+function readReports_() {
+  return readObjects_(REPORTS_SHEET);
+}
+
 function sanitize_(u) {
   return {
     id: Number(u.id), name: u.name, username: u.username, role: u.role,
@@ -309,10 +365,12 @@ function setup() {
   sheet_(USERS_SHEET);
   sheet_(REQUESTS_SHEET);
   sheet_(SICKNOTES_SHEET);
+  sheet_(REPORTS_SHEET);
   // Migrate older sheets: add any columns introduced in later versions.
   ensureColumns_(USERS_SHEET);
   ensureColumns_(REQUESTS_SHEET);
   ensureColumns_(SICKNOTES_SHEET);
+  ensureColumns_(REPORTS_SHEET);
   if (readUsers_().length === 0) {
     var seed = [
       { id: 1, name: 'Claire',     username: 'admin',     password: 'admin123',     role: 'admin',    approverId: '', startDate: '2020-01-01' },

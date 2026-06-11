@@ -5,20 +5,21 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { LEAVE_TYPES, STATUS } from './context/LeaveContext'
+import { workingDays, isoLocal } from './workdays'
 
 const BRAND = [254, 205, 40]   // #FECD28
 const INK = [17, 17, 17]       // #111111
 
 const parseLocal = (s) => { const [y, m, d] = String(s).split('-').map(Number); return new Date(y, m - 1, d) }
 
-// Days of one request that fall inside [mStart, mEnd], inclusive.
+// Working days of one request that fall inside [mStart, mEnd], inclusive.
 function daysInMonth(r, mStart, mEnd) {
   const s = parseLocal(r.startDate), e = parseLocal(r.endDate)
   if (isNaN(s) || isNaN(e)) return 0
   const a = s > mStart ? s : mStart
   const b = e < mEnd ? e : mEnd
   if (b < a) return 0
-  return Math.round((b - a) / 86400000) + 1
+  return workingDays(isoLocal(a), isoLocal(b), r.halfDay && isoLocal(s) === isoLocal(e))
 }
 
 // Load the logo and convert to a PNG data URL (jsPDF can't embed AVIF directly).
@@ -45,7 +46,8 @@ async function loadLogo() {
   } catch (e) { return null }
 }
 
-export async function downloadMonthlyPdf({ month, users, requests }) {
+// Builds the jsPDF doc and returns it with the suggested file name.
+async function buildDoc({ month, users, requests }) {
   const [y, m] = month.split('-').map(Number)
   const mStart = new Date(y, m - 1, 1)
   const mEnd = new Date(y, m, 0)
@@ -107,5 +109,18 @@ export async function downloadMonthlyPdf({ month, users, requests }) {
   doc.text('CabGlass — leave taken (approved). Days shown fall within the selected month.',
     14, doc.internal.pageSize.getHeight() - 10)
 
-  doc.save(`CabGlass-Leave-${month}.pdf`)
+  return { doc, fileName: `CabGlass-Leave-${month}.pdf` }
+}
+
+// Trigger a browser download of the report.
+export async function downloadMonthlyPdf(args) {
+  const { doc, fileName } = await buildDoc(args)
+  doc.save(fileName)
+}
+
+// Same report as base64 (no data: prefix) + file name, for emailing/Drive.
+export async function monthlyPdfBase64(args) {
+  const { doc, fileName } = await buildDoc(args)
+  const dataUri = doc.output('datauristring') // data:application/pdf;...;base64,XXXX
+  return { base64: dataUri.split(',')[1], fileName }
 }

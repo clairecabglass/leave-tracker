@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react'
-import { UserPlus, Trash2, Shield, User, Download, SlidersHorizontal } from 'lucide-react'
+import { UserPlus, Trash2, Shield, User, Download, SlidersHorizontal, Send } from 'lucide-react'
 import { useAuth, ROLES } from '../context/AuthContext'
 import { useLeave } from '../context/LeaveContext'
 import { balancesFor } from '../leaveCalc'
-import { downloadMonthlyPdf } from '../monthlyReport'
+import { downloadMonthlyPdf, monthlyPdfBase64 } from '../monthlyReport'
+import { LIVE, apiFinalizeMonth } from '../api'
 
 const num = (v) => Number(v) || 0
 
@@ -53,6 +54,8 @@ export default function AdminPage() {
   }
 
   const [downloading, setDownloading] = useState(false)
+  const [finalizing, setFinalizing] = useState(false)
+  const [recipients, setRecipients] = useState('')
   const downloadReport = async () => {
     setDownloading(true)
     try {
@@ -61,6 +64,30 @@ export default function AdminPage() {
       flash(setError, 'Could not build the report.')
       console.error('Report failed:', err)
     } finally { setDownloading(false) }
+  }
+
+  const monthLabel = (() => {
+    const [yy, mm] = reportMonth.split('-').map(Number)
+    return new Date(yy, mm - 1, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
+  })()
+
+  const finalize = async () => {
+    setError(''); setMsg('')
+    if (!LIVE) { flash(setError, 'Finalize needs the live backend connected (set the Vercel env vars).'); return }
+    if (!window.confirm(`Finalize ${monthLabel}? This emails the report to the accountants and saves a copy to Drive.`)) return
+    setFinalizing(true)
+    try {
+      const { base64, fileName } = await monthlyPdfBase64({ month: reportMonth, users, requests })
+      const res = await apiFinalizeMonth({
+        month: reportMonth, monthLabel, pdfBase64: base64, fileName,
+        finalizedBy: user.name, recipients: recipients.trim(),
+      })
+      if (res?.error) { flash(setError, res.error); return }
+      const where = [res.emailedTo && `emailed to ${res.emailedTo}`, res.driveLink && 'saved to Drive'].filter(Boolean).join(' and ')
+      flash(setMsg, `${monthLabel} finalized — ${where || 'recorded'}.`)
+    } catch (err) {
+      flash(setError, 'Finalize failed.'); console.error('Finalize failed:', err)
+    } finally { setFinalizing(false) }
   }
 
   return (
@@ -72,22 +99,33 @@ export default function AdminPage() {
       )}
 
       {/* Monthly report */}
-      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6 flex flex-col sm:flex-row sm:items-end gap-4">
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6 space-y-4">
         <div>
           <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100"><Download size={18} className="text-brand-dark" /> Monthly leave report</h2>
-          <p className="text-xs text-slate-400 mt-1">A branded PDF: each employee with the days of leave <span className="font-semibold">taken</span> per type that month.</p>
+          <p className="text-xs text-slate-400 mt-1">A branded PDF: each employee with the days of leave <span className="font-semibold">taken</span> per type that month. <span className="font-semibold">Download</span> a copy, or <span className="font-semibold">Finalize</span> to email it to the accountants and save it to Drive.</p>
         </div>
-        <div className="flex items-end gap-2 sm:ml-auto">
+        <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Month</label>
             <input type="month" value={reportMonth} onChange={e => setReportMonth(e.target.value)} className={inputCls} />
           </div>
-          <button onClick={downloadReport} disabled={downloading} style={{ backgroundColor: '#FECD28' }}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[#111111] disabled:opacity-50 hover:brightness-95 transition-all">
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Email to (optional — overrides the default)</label>
+            <input type="text" value={recipients} onChange={e => setRecipients(e.target.value)} placeholder="accounts@example.com, ..." className={inputCls} />
+          </div>
+          <button onClick={downloadReport} disabled={downloading}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 disabled:opacity-50 hover:bg-slate-100 dark:hover:bg-slate-700 transition-all">
             {downloading
-              ? <span className="w-4 h-4 border-2 border-[#111111]/30 border-t-[#111111] rounded-full animate-spin" />
+              ? <span className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
               : <Download size={15} />}
             {downloading ? 'Building…' : 'Download PDF'}
+          </button>
+          <button onClick={finalize} disabled={finalizing} style={{ backgroundColor: '#FECD28' }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[#111111] disabled:opacity-50 hover:brightness-95 transition-all">
+            {finalizing
+              ? <span className="w-4 h-4 border-2 border-[#111111]/30 border-t-[#111111] rounded-full animate-spin" />
+              : <Send size={15} />}
+            {finalizing ? 'Finalizing…' : 'Finalize & email'}
           </button>
         </div>
       </div>
