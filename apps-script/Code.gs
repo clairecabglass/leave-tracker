@@ -191,6 +191,20 @@ function sheet_(name) {
   return sh;
 }
 
+// Add any expected header columns that an older sheet is missing (in order).
+function ensureColumns_(name) {
+  var sh = sheet_(name);
+  var expected = headerFor_(name);
+  var lastCol = sh.getLastColumn();
+  var header = lastCol ? sh.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  expected.forEach(function (col) {
+    if (header.indexOf(col) === -1) {
+      sh.getRange(1, sh.getLastColumn() + 1).setValue(col);
+      header.push(col);
+    }
+  });
+}
+
 function readObjects_(name) {
   var sh = sheet_(name);
   var values = sh.getDataRange().getValues();
@@ -296,6 +310,10 @@ function setup() {
   sheet_(USERS_SHEET);
   sheet_(REQUESTS_SHEET);
   sheet_(SICKNOTES_SHEET);
+  // Migrate older sheets: add any columns introduced in later versions.
+  ensureColumns_(USERS_SHEET);
+  ensureColumns_(REQUESTS_SHEET);
+  ensureColumns_(SICKNOTES_SHEET);
   if (readUsers_().length === 0) {
     var seed = [
       { id: 1, name: 'Claire',     username: 'admin',     password: 'admin123',     role: 'admin',    approverId: '', startDate: '2020-01-01' },
