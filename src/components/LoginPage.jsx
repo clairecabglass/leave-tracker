@@ -14,8 +14,7 @@ export default function LoginPage() {
     e.preventDefault()
     setError('')
     setLoading(true)
-    await new Promise(r => setTimeout(r, 400))
-    const loggedInUser = login(username, password)
+    const loggedInUser = await login(username, password)
     if (!loggedInUser) setError('Incorrect username or password.')
     setLoading(false)
   }

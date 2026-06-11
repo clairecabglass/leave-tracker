@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
+import { LIVE, fetchData, apiLogin, apiAddUser, apiUpdateUser, apiDeleteUser } from '../api'
 
 const AuthContext = createContext(null)
 
@@ -9,11 +10,8 @@ export const ROLES = {
   admin:    { label: 'Admin' },
 }
 
-// Seed = the real CabGlass org so approver chains are demonstrable.
-//   Noel (boss)  approves  Ashton, Amy
-//   Ashton       approves  Jono, Laurenso
-//   Amy          approves  Brendon DB, Brendon V
-// Claire is the system admin. approverId = who approves THIS person's leave.
+// Mock-mode seed (only used when LIVE is false). The live backend's `setup()`
+// seeds the same people into the Sheet.
 const SEED_USERS = [
   { id: 1, name: 'Claire',     username: 'admin',  password: 'admin123',  role: 'admin',    approverId: null, startDate: '2020-01-01' },
   { id: 2, name: 'Noel',       username: 'noel',   password: 'noel123',   role: 'admin',    approverId: null, startDate: '2015-03-01' },
@@ -32,12 +30,9 @@ const IDLE_MS = 12 * 60 * 60 * 1000
 function loadUsers() {
   try {
     const raw = localStorage.getItem(USERS_KEY)
-    if (raw) {
-      const list = JSON.parse(raw)
-      if (Array.isArray(list) && list.length) return list
-    }
-  } catch (e) { /* ignore */ }
-  return SEED_USERS
+    if (raw) { const list = JSON.parse(raw); if (Array.isArray(list) && list.length) return list }
+  } catch (e) {}
+  return LIVE ? [] : SEED_USERS
 }
 
 function loadSession(users) {
@@ -45,19 +40,29 @@ function loadSession(users) {
     const raw = localStorage.getItem(SESSION_KEY)
     if (!raw) return null
     const s = JSON.parse(raw)
-    if (!s.user || !s.expiresAt || Date.now() > s.expiresAt) {
-      localStorage.removeItem(SESSION_KEY); return null
-    }
-    const fresh = users.find(u => u.id === s.user.id)
-    return fresh || s.user
+    if (!s.user || !s.expiresAt || Date.now() > s.expiresAt) { localStorage.removeItem(SESSION_KEY); return null }
+    return users.find(u => u.id === s.user.id) || s.user
   } catch (e) { return null }
 }
 
 export function AuthProvider({ children }) {
   const [users, setUsers] = useState(loadUsers)
   const [user, setUser] = useState(() => loadSession(loadUsers()))
+  const [loading, setLoading] = useState(LIVE)
 
+  // Cache users locally (acts as instant paint; server overrides on load).
   useEffect(() => { localStorage.setItem(USERS_KEY, JSON.stringify(users)) }, [users])
+
+  // Pull the authoritative user list from the server.
+  const refresh = async () => {
+    if (!LIVE) return
+    try {
+      const data = await fetchData()
+      if (data && data.users) setUsers(data.users)
+    } catch (err) { console.error('Load users failed:', err) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { refresh() }, [])
 
   const writeSession = (u) => {
     if (!u) { localStorage.removeItem(SESSION_KEY); return }
@@ -65,12 +70,11 @@ export function AuthProvider({ children }) {
     localStorage.setItem(SESSION_KEY, JSON.stringify({ user: safe, expiresAt: Date.now() + IDLE_MS }))
   }
 
-  // Keep the logged-in user object in sync with edits to the users list.
+  // Keep the logged-in user in sync with edits to the list.
   useEffect(() => {
     if (!user) return
     const fresh = users.find(u => u.id === user.id)
-    if (!fresh) { logout(); return }
-    if (fresh !== user) setUser(fresh)
+    if (fresh && fresh !== user) setUser(fresh)
   }, [users]) // eslint-disable-line
 
   useEffect(() => {
@@ -87,7 +91,15 @@ export function AuthProvider({ children }) {
     return () => { events.forEach(e => window.removeEventListener(e, bump)); clearInterval(check) }
   }, [user])
 
-  const login = (username, password) => {
+  // ── Auth ──
+  const login = async (username, password) => {
+    if (LIVE) {
+      try {
+        const res = await apiLogin(username, password)
+        if (res && res.user) { setUser(res.user); writeSession(res.user); refresh(); return res.user }
+      } catch (err) { console.error('Login failed:', err) }
+      return null
+    }
     const found = users.find(u => u.username === username.trim().toLowerCase() && u.password === password)
     if (found) { setUser(found); writeSession(found); return found }
     return null
@@ -96,7 +108,7 @@ export function AuthProvider({ children }) {
   const logout = () => { writeSession(null); setUser(null) }
 
   // ── User management (admin only) ──
-  const addUser = (data) => {
+  const addUser = async (data) => {
     const username = data.username.trim().toLowerCase()
     if (users.some(u => u.username === username)) return { error: 'That username is already taken.' }
     const newUser = {
@@ -108,34 +120,52 @@ export function AuthProvider({ children }) {
       approverId: data.approverId ? Number(data.approverId) : null,
       startDate: data.startDate || '',
     }
+    if (LIVE) {
+      const res = await apiAddUser(newUser)
+      if (res && res.error) return res
+      await refresh()
+      return { user: res.user || newUser }
+    }
     setUsers(prev => [...prev, newUser])
     return { user: newUser }
   }
 
-  const updateUser = (id, patch) => {
+  const updateUser = async (id, patch) => {
     const clean = { ...patch }
     if ('username' in clean) {
       const username = clean.username.trim().toLowerCase()
       if (users.some(u => u.username === username && u.id !== id)) return { error: 'That username is already taken.' }
       clean.username = username
     }
-    if ('approverId' in clean) clean.approverId = clean.approverId ? Number(clean.approverId) : null
-    if ('approverId' in clean && Number(clean.approverId) === id) return { error: 'A user cannot approve their own leave.' }
+    if ('approverId' in clean) {
+      clean.approverId = clean.approverId ? Number(clean.approverId) : null
+      if (clean.approverId === id) return { error: 'A user cannot approve their own leave.' }
+    }
+    if (LIVE) {
+      const res = await apiUpdateUser(id, clean)
+      if (res && res.error) return res
+      await refresh()
+      return {}
+    }
     setUsers(prev => prev.map(u => u.id === id ? { ...u, ...clean } : u))
     return {}
   }
 
-  const deleteUser = (id) => {
+  const deleteUser = async (id) => {
     if (id === user?.id) return { error: "You can't remove your own account." }
     const reports = users.filter(u => u.approverId === id)
     if (reports.length) return { error: `${userName(id)} approves ${reports.length} ${reports.length === 1 ? 'person' : 'people'}. Reassign them first.` }
+    if (LIVE) {
+      const res = await apiDeleteUser(id)
+      if (res && res.error) return res
+      await refresh()
+      return {}
+    }
     setUsers(prev => prev.filter(u => u.id !== id))
     return {}
   }
 
   const userName = (id) => users.find(u => u.id === id)?.name || '—'
-
-  // People whose leave THIS user approves.
   const reportsOf = (id) => users.filter(u => u.approverId === id)
   const isApproverFor = (id) => reportsOf(id).length > 0
 
@@ -144,8 +174,8 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      user, users, login, logout, addUser, updateUser, deleteUser,
-      userName, reportsOf, isApproverFor, isAdmin, isApprover,
+      user, users, loading, login, logout, addUser, updateUser, deleteUser,
+      userName, reportsOf, isApproverFor, isAdmin, isApprover, refresh,
     }}>
       {children}
     </AuthContext.Provider>

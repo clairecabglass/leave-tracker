@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
+import { LIVE, fetchData, apiSubmitRequest, apiDecideRequest, apiCancelRequest } from '../api'
 
 const LeaveContext = createContext(null)
 
@@ -30,7 +31,17 @@ function loadRequests() {
 
 export function LeaveProvider({ children }) {
   const [requests, setRequests] = useState(loadRequests)
+
   useEffect(() => { localStorage.setItem(REQUESTS_KEY, JSON.stringify(requests)) }, [requests])
+
+  const refresh = async () => {
+    if (!LIVE) return
+    try {
+      const data = await fetchData()
+      if (data && data.requests) setRequests(data.requests)
+    } catch (err) { console.error('Load requests failed:', err) }
+  }
+  useEffect(() => { refresh() }, [])
 
   const submitRequest = ({ employee, type, otherLabel, startDate, endDate, reason }) => {
     const req = {
@@ -47,19 +58,24 @@ export function LeaveProvider({ children }) {
       submittedAt: new Date().toISOString(),
       decidedBy: '', decidedAt: '',
     }
-    setRequests(prev => [req, ...prev])
+    setRequests(prev => [req, ...prev]) // optimistic
+    if (LIVE) apiSubmitRequest(req).then(refresh).catch(err => console.error('Submit failed:', err))
     return req
   }
 
   const decideRequest = (id, status, deciderName) => {
     setRequests(prev => prev.map(r => r.id === id
       ? { ...r, status, decidedBy: deciderName, decidedAt: new Date().toISOString() } : r))
+    if (LIVE) apiDecideRequest(id, status, deciderName).then(refresh).catch(err => console.error('Decide failed:', err))
   }
 
-  const cancelRequest = (id) => setRequests(prev => prev.filter(r => r.id !== id))
+  const cancelRequest = (id) => {
+    setRequests(prev => prev.filter(r => r.id !== id))
+    if (LIVE) apiCancelRequest(id).then(refresh).catch(err => console.error('Cancel failed:', err))
+  }
 
   return (
-    <LeaveContext.Provider value={{ requests, submitRequest, decideRequest, cancelRequest }}>
+    <LeaveContext.Provider value={{ requests, submitRequest, decideRequest, cancelRequest, refresh }}>
       {children}
     </LeaveContext.Provider>
   )

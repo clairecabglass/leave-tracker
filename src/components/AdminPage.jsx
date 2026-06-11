@@ -14,23 +14,23 @@ export default function AdminPage() {
 
   const flash = (setter, text) => { setter(text); setTimeout(() => setter(''), 3500) }
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault()
     setError(''); setMsg('')
-    const res = addUser(form)
+    const res = await addUser(form)
     if (res.error) { setError(res.error); return }
     setForm({ name: '', username: '', password: '', role: 'employee', approverId: '', startDate: '' })
     flash(setMsg, `Added ${res.user.name}.`)
   }
 
-  const patch = (id, key, value) => {
-    const res = updateUser(id, { [key]: value })
+  const patch = async (id, key, value) => {
+    const res = await updateUser(id, { [key]: value })
     if (res?.error) flash(setError, res.error)
   }
 
-  const remove = (u) => {
+  const remove = async (u) => {
     if (!window.confirm(`Remove ${u.name}? They will lose access immediately.`)) return
-    const res = deleteUser(u.id)
+    const res = await deleteUser(u.id)
     if (res?.error) flash(setError, res.error)
   }
 
