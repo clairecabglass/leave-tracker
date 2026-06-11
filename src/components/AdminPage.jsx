@@ -1,16 +1,28 @@
-import { useState } from 'react'
-import { UserPlus, Trash2, Shield, User } from 'lucide-react'
+import { useState, useMemo } from 'react'
+import { UserPlus, Trash2, Shield, User, Download, SlidersHorizontal } from 'lucide-react'
 import { useAuth, ROLES } from '../context/AuthContext'
+import { useLeave, STATUS } from '../context/LeaveContext'
+import { balancesFor } from '../leaveCalc'
+
+const num = (v) => Number(v) || 0
+const csvCell = (v) => {
+  const s = String(v ?? '')
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
 
 export default function AdminPage() {
   const { user, users, addUser, updateUser, deleteUser } = useAuth()
+  const { requests } = useLeave()
   const [form, setForm] = useState({ name: '', username: '', password: '', role: 'employee', approverId: '', startDate: '' })
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
+  const now = new Date()
+  const [reportMonth, setReportMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const inputCls = 'w-full px-3 py-2.5 text-sm border border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand/40 transition-colors'
   const cellSelect = 'text-xs border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 dark:text-slate-100 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand/40'
+  const numCell = 'w-20 text-xs border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 dark:text-slate-100 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand/40'
 
   const flash = (setter, text) => { setter(text); setTimeout(() => setter(''), 3500) }
 
@@ -34,6 +46,42 @@ export default function AdminPage() {
     if (res?.error) flash(setError, res.error)
   }
 
+  // Admin types a "remaining" number; we store it as an adjustment so accrual
+  // and taken-days keep working underneath.  adjust = desired - (remaining - adjustOld)
+  const setRemaining = (u, field, adjustKey, balRemaining, desiredRaw) => {
+    const desired = num(desiredRaw)
+    const adjustOld = num(u[adjustKey])
+    const adjustNew = +(desired - (balRemaining - adjustOld)).toFixed(2)
+    patch(u.id, adjustKey, adjustNew)
+  }
+
+  const downloadReport = () => {
+    const [y, m] = reportMonth.split('-').map(Number)
+    const monthStart = new Date(y, m - 1, 1)
+    const monthEnd = new Date(y, m, 0)
+    const rows = requests
+      .filter(r => r.status === STATUS.APPROVED)
+      .filter(r => { const s = new Date(r.startDate), e = new Date(r.endDate); return e >= monthStart && s <= monthEnd })
+      .sort((a, b) => a.employeeName.localeCompare(b.employeeName) || new Date(a.startDate) - new Date(b.startDate))
+    const header = ['Employee', 'Leave type', 'From', 'To', 'Days']
+    const body = rows.map(r => [
+      r.employeeName,
+      r.type === 'Other' && r.otherLabel ? `Other - ${r.otherLabel}` : r.type,
+      r.startDate, r.endDate, r.days,
+    ])
+    const total = rows.reduce((s, r) => s + num(r.days), 0)
+    body.push([])
+    body.push(['', '', '', 'Total days', total])
+    const csv = [header, ...body].map(cols => cols.map(csvCell).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `CabGlass-Leave-${reportMonth}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="space-y-6">
       {(error || msg) && (
@@ -41,6 +89,24 @@ export default function AdminPage() {
           {error || msg}
         </p>
       )}
+
+      {/* Monthly report */}
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6 flex flex-col sm:flex-row sm:items-end gap-4">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100"><Download size={18} className="text-brand-dark" /> Monthly leave report</h2>
+          <p className="text-xs text-slate-400 mt-1">All approved leave <span className="font-semibold">taken</span> in the chosen month — name, dates and days. Downloads as a CSV (opens in Excel).</p>
+        </div>
+        <div className="flex items-end gap-2 sm:ml-auto">
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Month</label>
+            <input type="month" value={reportMonth} onChange={e => setReportMonth(e.target.value)} className={inputCls} />
+          </div>
+          <button onClick={downloadReport} style={{ backgroundColor: '#FECD28' }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[#111111] hover:brightness-95 transition-all">
+            <Download size={15} /> Download
+          </button>
+        </div>
+      </div>
 
       {/* Add user */}
       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6">
@@ -140,6 +206,48 @@ export default function AdminPage() {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Leave balances */}
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+          <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100"><SlidersHorizontal size={18} className="text-brand-dark" /> Leave balances</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Days each person has <span className="font-semibold">left</span>. Edit a number to override — annual still accrues and taken days are still deducted automatically.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide border-b border-slate-200 dark:border-slate-700">
+                <th className="px-6 py-3">Person</th>
+                <th className="px-6 py-3">Annual left</th>
+                <th className="px-6 py-3">Sick left</th>
+                <th className="px-6 py-3">Family left</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+              {users.map(u => {
+                const bal = balancesFor(u, requests)
+                return (
+                  <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/40">
+                    <td className="px-6 py-3 font-semibold text-slate-800 dark:text-slate-100">{u.name}</td>
+                    <td className="px-6 py-3">
+                      <input key={`a${u.id}-${bal.annual.remaining}`} type="number" step="0.25" defaultValue={bal.annual.remaining} className={numCell}
+                        onBlur={e => setRemaining(u, 'annual', 'annualAdjust', bal.annual.remaining, e.target.value)} />
+                    </td>
+                    <td className="px-6 py-3">
+                      <input key={`s${u.id}-${bal.sick.remaining}`} type="number" defaultValue={bal.sick.remaining} className={numCell}
+                        onBlur={e => setRemaining(u, 'sick', 'sickAdjust', bal.sick.remaining, e.target.value)} />
+                    </td>
+                    <td className="px-6 py-3">
+                      <input key={`f${u.id}-${bal.family.remaining}`} type="number" defaultValue={bal.family.remaining} className={numCell}
+                        onBlur={e => setRemaining(u, 'family', 'familyAdjust', bal.family.remaining, e.target.value)} />
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

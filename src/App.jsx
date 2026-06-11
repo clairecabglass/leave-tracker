@@ -6,7 +6,9 @@ import Header from './components/Header'
 import LoginPage from './components/LoginPage'
 import ApplyPage from './components/ApplyPage'
 import ApprovalsPage from './components/ApprovalsPage'
+import SickNotesPage from './components/SickNotesPage'
 import CalendarPage from './components/CalendarPage'
+import PPPage from './components/PPPage'
 import AdminPage from './components/AdminPage'
 
 function Portal() {
@@ -14,7 +16,7 @@ function Portal() {
   const [dark, toggleDark] = useDarkMode()
   const [activeTab, setActiveTab] = useState('apply')
 
-  // Drop the user onto Apply if they land on a tab they can't see.
+  // Bounce users off tabs they can't see.
   useEffect(() => {
     if (activeTab === 'admin' && !isAdmin) setActiveTab('apply')
     if (activeTab === 'approvals' && !(isApprover || isAdmin)) setActiveTab('apply')
@@ -25,7 +27,9 @@ function Portal() {
   const page =
     activeTab === 'admin' && isAdmin ? <AdminPage />
     : activeTab === 'approvals' && (isApprover || isAdmin) ? <ApprovalsPage />
+    : activeTab === 'sicknotes' ? <SickNotesPage />
     : activeTab === 'calendar' ? <CalendarPage />
+    : activeTab === 'pp' ? <PPPage />
     : <ApplyPage />
 
   return (

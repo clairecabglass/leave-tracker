@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Check, X, Inbox, Users } from 'lucide-react'
+import { Check, X, Inbox, Users, Undo2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useLeave, STATUS } from '../context/LeaveContext'
 import StatusBadge from './StatusBadge'
@@ -8,12 +8,12 @@ const fmt = (d) => d ? new Date(d).toLocaleDateString('en-ZA', { day: '2-digit',
 
 export default function ApprovalsPage() {
   const { user, reportsOf, isAdmin } = useAuth()
-  const { requests, decideRequest } = useLeave()
+  const { requests, decideRequest, undoRequest } = useLeave()
   const [filter, setFilter] = useState(STATUS.PENDING)
+  const [decision, setDecision] = useState(null) // { req, status }
+  const [note, setNote] = useState('')
 
   const reportIds = useMemo(() => new Set(reportsOf(user.id).map(u => u.id)), [reportsOf, user.id])
-
-  // Requests routed to me: from my direct reports, OR (if admin) ones with no approver.
   const queue = useMemo(() => requests.filter(r =>
     reportIds.has(r.employeeId) || r.approverId === user.id || (isAdmin && !r.approverId && r.employeeId !== user.id)
   ), [requests, reportIds, user.id, isAdmin])
@@ -26,15 +26,19 @@ export default function ApprovalsPage() {
   }), [queue])
 
   const filtered = filter === 'all' ? queue : queue.filter(r => r.status === filter)
-
   const tabs = [
     { key: STATUS.PENDING, label: 'Pending' },
     { key: STATUS.APPROVED, label: 'Approved' },
     { key: STATUS.DECLINED, label: 'Declined' },
     { key: 'all', label: 'All' },
   ]
-
   const myReports = reportsOf(user.id)
+
+  const openDecision = (req, status) => { setDecision({ req, status }); setNote('') }
+  const confirmDecision = () => {
+    decideRequest(decision.req.id, decision.status, user.name, note.trim())
+    setDecision(null); setNote('')
+  }
 
   return (
     <div className="space-y-4">
@@ -80,30 +84,40 @@ export default function ApprovalsPage() {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                 {filtered.map(r => (
                   <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/40">
-                    <td className="px-6 py-3">
+                    <td className="px-6 py-3 align-top">
                       <div className="font-semibold text-slate-800 dark:text-slate-100">{r.employeeName}</div>
-                      {r.reason && <div className="text-xs text-slate-400 max-w-xs truncate">{r.reason}</div>}
+                      {r.reason && <div className="text-xs text-slate-400 max-w-xs">{r.reason}</div>}
                     </td>
-                    <td className="px-6 py-3 text-slate-600 dark:text-slate-300">
+                    <td className="px-6 py-3 align-top text-slate-600 dark:text-slate-300">
                       {r.type === 'Other' && r.otherLabel ? `Other — ${r.otherLabel}` : r.type}
                     </td>
-                    <td className="px-6 py-3 text-slate-600 dark:text-slate-300 whitespace-nowrap">{fmt(r.startDate)} → {fmt(r.endDate)}</td>
-                    <td className="px-6 py-3 text-slate-600 dark:text-slate-300">{r.days}</td>
-                    <td className="px-6 py-3"><StatusBadge status={r.status} /></td>
-                    <td className="px-6 py-3">
+                    <td className="px-6 py-3 align-top text-slate-600 dark:text-slate-300 whitespace-nowrap">{fmt(r.startDate)} → {fmt(r.endDate)}</td>
+                    <td className="px-6 py-3 align-top text-slate-600 dark:text-slate-300">{r.days}</td>
+                    <td className="px-6 py-3 align-top">
+                      <StatusBadge status={r.status} />
+                      {r.decisionNote && <div className="text-xs text-slate-400 mt-1 max-w-[180px] italic">“{r.decisionNote}”</div>}
+                    </td>
+                    <td className="px-6 py-3 align-top">
                       {r.status === STATUS.PENDING ? (
                         <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => decideRequest(r.id, STATUS.APPROVED, user.name)}
+                          <button onClick={() => openDecision(r, STATUS.APPROVED)}
                             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-100 text-emerald-800 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 transition-colors">
                             <Check size={13} /> Approve
                           </button>
-                          <button onClick={() => decideRequest(r.id, STATUS.DECLINED, user.name)}
+                          <button onClick={() => openDecision(r, STATUS.DECLINED)}
                             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300 transition-colors">
                             <X size={13} /> Decline
                           </button>
                         </div>
                       ) : (
-                        <div className="text-right text-xs text-slate-400">{r.decidedBy ? `by ${r.decidedBy}` : '—'}</div>
+                        <div className="flex items-center justify-end gap-2">
+                          <span className="text-xs text-slate-400">{r.decidedBy ? `by ${r.decidedBy}` : ''}</span>
+                          <button onClick={() => { if (window.confirm('Undo this decision and set it back to Pending?')) undoRequest(r.id) }}
+                            title="Undo decision"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 transition-colors">
+                            <Undo2 size={13} /> Undo
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -113,6 +127,31 @@ export default function ApprovalsPage() {
           </div>
         )}
       </div>
+
+      {/* Decision modal */}
+      {decision && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={() => setDecision(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-800 shadow-xl border border-slate-200 dark:border-slate-700 p-6" onMouseDown={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+              {decision.status === STATUS.APPROVED ? 'Approve' : 'Decline'} — {decision.req.employeeName}
+            </h3>
+            <p className="text-xs text-slate-400 mt-1">
+              {decision.req.type} · {fmt(decision.req.startDate)} → {fmt(decision.req.endDate)} · {decision.req.days} day{decision.req.days !== 1 ? 's' : ''}
+            </p>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5 mt-4">Note (optional)</label>
+            <textarea value={note} onChange={e => setNote(e.target.value)} rows={3} autoFocus
+              placeholder="Add a note for the employee…"
+              className="w-full px-3 py-2.5 text-sm border border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand/40 resize-none" />
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button onClick={() => setDecision(null)} className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">Cancel</button>
+              <button onClick={confirmDecision}
+                className={`px-4 py-2 rounded-xl text-sm font-bold text-white ${decision.status === STATUS.APPROVED ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'}`}>
+                Confirm {decision.status === STATUS.APPROVED ? 'approval' : 'decline'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

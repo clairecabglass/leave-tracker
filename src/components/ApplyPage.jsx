@@ -59,7 +59,8 @@ export default function ApplyPage() {
           value={`${bal.sick.remaining} days`}
           sub={`of ${bal.sick.entitlement} this 3-yr cycle · ${bal.sick.taken} taken`} />
         <BalanceCard label="Family Resp." tone="slate"
-          value={`${bal.family.taken} days`} sub="taken this year" />
+          value={`${bal.family.remaining} days`}
+          sub={`of ${bal.family.entitlement} this year · ${bal.family.taken} taken`} />
         <BalanceCard label="Unpaid / Other" tone="slate"
           value={`${bal.unpaid.taken + bal.other.taken} days`} sub="taken" />
       </div>
