@@ -3,97 +3,145 @@ import { UserPlus, Trash2, Shield, User } from 'lucide-react'
 import { useAuth, ROLES } from '../context/AuthContext'
 
 export default function AdminPage() {
-  const { user, users, addUser, deleteUser } = useAuth()
-  const [name, setName] = useState('')
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [role, setRole] = useState('employee')
+  const { user, users, addUser, updateUser, deleteUser } = useAuth()
+  const [form, setForm] = useState({ name: '', username: '', password: '', role: 'employee', approverId: '', startDate: '' })
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
 
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const inputCls = 'w-full px-3 py-2.5 text-sm border border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand/40 transition-colors'
+  const cellSelect = 'text-xs border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 dark:text-slate-100 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand/40'
+
+  const flash = (setter, text) => { setter(text); setTimeout(() => setter(''), 3500) }
 
   const submit = (e) => {
     e.preventDefault()
     setError(''); setMsg('')
-    const res = addUser({ name, username, password, role })
+    const res = addUser(form)
     if (res.error) { setError(res.error); return }
-    setName(''); setUsername(''); setPassword(''); setRole('employee')
-    setMsg(`Added ${res.user.name}.`)
-    setTimeout(() => setMsg(''), 3000)
+    setForm({ name: '', username: '', password: '', role: 'employee', approverId: '', startDate: '' })
+    flash(setMsg, `Added ${res.user.name}.`)
+  }
+
+  const patch = (id, key, value) => {
+    const res = updateUser(id, { [key]: value })
+    if (res?.error) flash(setError, res.error)
   }
 
   const remove = (u) => {
     if (!window.confirm(`Remove ${u.name}? They will lose access immediately.`)) return
     const res = deleteUser(u.id)
-    if (res.error) { setError(res.error); setTimeout(() => setError(''), 3000) }
+    if (res?.error) flash(setError, res.error)
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-5">
+    <div className="space-y-6">
+      {(error || msg) && (
+        <p className={`text-sm rounded-lg px-3 py-2 ${error ? 'text-red-600 bg-red-50 dark:bg-red-900/20' : 'text-emerald-700 bg-emerald-50 dark:bg-emerald-900/20'}`}>
+          {error || msg}
+        </p>
+      )}
+
       {/* Add user */}
-      <div className="lg:col-span-2">
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6">
-          <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100 mb-5">
-            <UserPlus size={18} className="text-brand-dark" /> Add user
-          </h2>
-          <form onSubmit={submit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Full name</label>
-              <input value={name} onChange={e => setName(e.target.value)} required placeholder="e.g. Amy Smith" className={inputCls} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Username</label>
-              <input value={username} onChange={e => setUsername(e.target.value)} required placeholder="e.g. amy" className={inputCls} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Password</label>
-              <input value={password} onChange={e => setPassword(e.target.value)} required placeholder="Temporary password" className={inputCls} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Role</label>
-              <select value={role} onChange={e => setRole(e.target.value)} className={inputCls}>
-                {Object.entries(ROLES).map(([key, { label }]) => <option key={key} value={key}>{label}</option>)}
-              </select>
-            </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            {msg && <p className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</p>}
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6">
+        <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100 mb-5">
+          <UserPlus size={18} className="text-brand-dark" /> Add user
+        </h2>
+        <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Full name</label>
+            <input value={form.name} onChange={e => set('name', e.target.value)} required placeholder="e.g. Amy Smith" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Username</label>
+            <input value={form.username} onChange={e => set('username', e.target.value)} required placeholder="e.g. amy" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Password</label>
+            <input value={form.password} onChange={e => set('password', e.target.value)} required placeholder="Temporary password" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Role</label>
+            <select value={form.role} onChange={e => set('role', e.target.value)} className={inputCls}>
+              {Object.entries(ROLES).map(([key, { label }]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Approver</label>
+            <select value={form.approverId} onChange={e => set('approverId', e.target.value)} className={inputCls}>
+              <option value="">— None (admin handles) —</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Start date</label>
+            <input type="date" value={form.startDate} onChange={e => set('startDate', e.target.value)} className={inputCls} />
+          </div>
+          <div className="sm:col-span-2 lg:col-span-3">
             <button type="submit" style={{ backgroundColor: '#FECD28' }}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-[#111111] hover:brightness-95 transition-all">
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[#111111] hover:brightness-95 transition-all">
               <UserPlus size={15} /> Add user
             </button>
-          </form>
-        </div>
+          </div>
+        </form>
       </div>
 
-      {/* User list */}
-      <div className="lg:col-span-3">
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
-            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Users <span className="text-slate-400 font-normal">({users.length})</span></h2>
-          </div>
-          <ul className="divide-y divide-slate-100 dark:divide-slate-700">
-            {users.map(u => (
-              <li key={u.id} className="px-6 py-4 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`flex h-9 w-9 items-center justify-center rounded-full ${u.role === 'admin' ? 'bg-brand/20 text-brand-dark' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300'}`}>
-                    {u.role === 'admin' ? <Shield size={16} /> : <User size={16} />}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-sm text-slate-800 dark:text-slate-100 truncate">{u.name}</span>
-                      {u.id === user.id && <span className="text-xs text-slate-400">(you)</span>}
+      {/* Users table */}
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+          <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Users <span className="text-slate-400 font-normal">({users.length})</span></h2>
+          <p className="text-xs text-slate-400 mt-0.5">Set each person's approver and role inline. "Approver" rights come automatically from being assigned to someone.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide border-b border-slate-200 dark:border-slate-700">
+                <th className="px-6 py-3">Person</th>
+                <th className="px-6 py-3">Role</th>
+                <th className="px-6 py-3">Approved by</th>
+                <th className="px-6 py-3">Start date</th>
+                <th className="px-6 py-3 text-right">Remove</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+              {users.map(u => (
+                <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/40">
+                  <td className="px-6 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`flex h-8 w-8 items-center justify-center rounded-full ${u.role === 'admin' ? 'bg-brand/20 text-brand-dark' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300'}`}>
+                        {u.role === 'admin' ? <Shield size={15} /> : <User size={15} />}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-slate-800 dark:text-slate-100">{u.name}{u.id === user.id && <span className="text-xs text-slate-400 font-normal"> (you)</span>}</div>
+                        <div className="text-xs text-slate-400">@{u.username}</div>
+                      </div>
                     </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">@{u.username} · {ROLES[u.role]?.label || u.role}</p>
-                  </div>
-                </div>
-                <button onClick={() => remove(u)} disabled={u.id === user.id} title={u.id === user.id ? "You can't remove yourself" : 'Remove user'}
-                  className="shrink-0 p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors">
-                  <Trash2 size={16} />
-                </button>
-              </li>
-            ))}
-          </ul>
+                  </td>
+                  <td className="px-6 py-3">
+                    <select value={u.role} onChange={e => patch(u.id, 'role', e.target.value)} className={cellSelect}>
+                      {Object.entries(ROLES).map(([key, { label }]) => <option key={key} value={key}>{label}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-6 py-3">
+                    <select value={u.approverId ?? ''} onChange={e => patch(u.id, 'approverId', e.target.value)} className={cellSelect}>
+                      <option value="">— None —</option>
+                      {users.filter(o => o.id !== u.id).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-6 py-3">
+                    <input type="date" value={u.startDate || ''} onChange={e => patch(u.id, 'startDate', e.target.value)} className={cellSelect} />
+                  </td>
+                  <td className="px-6 py-3 text-right">
+                    <button onClick={() => remove(u)} disabled={u.id === user.id}
+                      title={u.id === user.id ? "You can't remove yourself" : 'Remove user'}
+                      className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors">
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
