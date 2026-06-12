@@ -121,13 +121,9 @@ export function AuthProvider({ children }) {
       startDate: data.startDate || '',
       email: (data.email || '').trim(),
     }
-    if (LIVE) {
-      const res = await apiAddUser(newUser)
-      if (res && res.error) return res
-      await refresh()
-      return { user: res.user || newUser }
-    }
+    // Optimistic: update the UI now, sync to the server in the background.
     setUsers(prev => [...prev, newUser])
+    if (LIVE) apiAddUser(newUser).then(res => { if (res?.error) refresh() }).catch(() => refresh())
     return { user: newUser }
   }
 
@@ -142,13 +138,9 @@ export function AuthProvider({ children }) {
       clean.approverId = clean.approverId ? Number(clean.approverId) : null
       if (clean.approverId === id) return { error: 'A user cannot approve their own leave.' }
     }
-    if (LIVE) {
-      const res = await apiUpdateUser(id, clean)
-      if (res && res.error) return res
-      await refresh()
-      return {}
-    }
+    // Optimistic: reflect the change immediately; the network call is fire-and-forget.
     setUsers(prev => prev.map(u => u.id === id ? { ...u, ...clean } : u))
+    if (LIVE) apiUpdateUser(id, clean).then(res => { if (res?.error) refresh() }).catch(() => refresh())
     return {}
   }
 
@@ -156,13 +148,8 @@ export function AuthProvider({ children }) {
     if (id === user?.id) return { error: "You can't remove your own account." }
     const reports = users.filter(u => u.approverId === id)
     if (reports.length) return { error: `${userName(id)} approves ${reports.length} ${reports.length === 1 ? 'person' : 'people'}. Reassign them first.` }
-    if (LIVE) {
-      const res = await apiDeleteUser(id)
-      if (res && res.error) return res
-      await refresh()
-      return {}
-    }
     setUsers(prev => prev.filter(u => u.id !== id))
+    if (LIVE) apiDeleteUser(id).then(res => { if (res?.error) refresh() }).catch(() => refresh())
     return {}
   }
 
