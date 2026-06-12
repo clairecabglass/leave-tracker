@@ -15,7 +15,10 @@ export default function AdminPage() {
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
   const now = new Date()
-  const [reportMonth, setReportMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  // Report date range, defaulting to the current month.
+  const [from, setFrom] = useState(ymd(new Date(now.getFullYear(), now.getMonth(), 1)))
+  const [to, setTo] = useState(ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)))
   const [editing, setEditing] = useState(null)   // user being edited
   const [edit, setEdit] = useState({})           // edit form values
 
@@ -80,29 +83,31 @@ export default function AdminPage() {
   const [downloading, setDownloading] = useState(false)
   const [finalizing, setFinalizing] = useState(false)
   const [recipients, setRecipients] = useState('')
+  const pl = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d) }
+  const fmtD = (s) => pl(s).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
+  const rangeLabel = from && to ? `${fmtD(from)} – ${fmtD(to)}` : ''
+  const rangeOk = from && to && from <= to
+
   const downloadReport = async () => {
+    if (!rangeOk) { flash(setError, 'Pick a valid date range.'); return }
     setDownloading(true)
-    try { await downloadMonthlyPdf({ month: reportMonth, users, requests }) }
+    try { await downloadMonthlyPdf({ from, to, users, requests }) }
     catch (err) { flash(setError, 'Could not build the report.'); console.error('Report failed:', err) }
     finally { setDownloading(false) }
   }
 
-  const monthLabel = (() => {
-    const [yy, mm] = reportMonth.split('-').map(Number)
-    return new Date(yy, mm - 1, 1).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
-  })()
-
   const finalize = async () => {
     setError(''); setMsg('')
+    if (!rangeOk) { flash(setError, 'Pick a valid date range.'); return }
     if (!LIVE) { flash(setError, 'Finalize needs the live backend connected (set the Vercel env vars).'); return }
-    if (!window.confirm(`Finalize ${monthLabel}? This emails the report to the accountants and saves a copy to Drive.`)) return
+    if (!window.confirm(`Finalize ${rangeLabel}? This emails the report to the accountants and saves a copy to Drive.`)) return
     setFinalizing(true)
     try {
-      const { base64, fileName } = await monthlyPdfBase64({ month: reportMonth, users, requests })
-      const res = await apiFinalizeMonth({ month: reportMonth, monthLabel, pdfBase64: base64, fileName, finalizedBy: user.name, recipients: recipients.trim() })
+      const { base64, fileName } = await monthlyPdfBase64({ from, to, users, requests })
+      const res = await apiFinalizeMonth({ month: `${from}_to_${to}`, monthLabel: rangeLabel, pdfBase64: base64, fileName, finalizedBy: user.name, recipients: recipients.trim() })
       if (res?.error) { flash(setError, res.error); return }
       const where = [res.emailedTo && `emailed to ${res.emailedTo}`, res.driveLink && 'saved to Drive'].filter(Boolean).join(' and ')
-      flash(setMsg, `${monthLabel} finalized — ${where || 'recorded'}.`)
+      flash(setMsg, `${rangeLabel} finalized — ${where || 'recorded'}.`)
     } catch (err) { flash(setError, 'Finalize failed.'); console.error('Finalize failed:', err) }
     finally { setFinalizing(false) }
   }
@@ -118,15 +123,19 @@ export default function AdminPage() {
       {/* Monthly report */}
       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6 space-y-4">
         <div>
-          <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100"><Download size={18} className="text-brand-dark" /> Monthly leave report</h2>
-          <p className="text-xs text-slate-400 mt-1">A branded PDF: each employee with the days of leave <span className="font-semibold">scheduled</span> per type that month (approved &amp; pending). <span className="font-semibold">Download</span> a copy, or <span className="font-semibold">Finalize</span> to email it to the accountants and save it to Drive.</p>
+          <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100"><Download size={18} className="text-brand-dark" /> Leave report</h2>
+          <p className="text-xs text-slate-400 mt-1">A branded PDF: each employee with the days of <span className="font-semibold">approved</span> leave per type over the chosen date range. <span className="font-semibold">Download</span> a copy, or <span className="font-semibold">Finalize</span> to email it to the accountants and save it to Drive.</p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
           <div>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Month</label>
-            <input type="month" value={reportMonth} onChange={e => setReportMonth(e.target.value)} className={inputCls} />
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">From</label>
+            <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} />
           </div>
-          <div className="flex-1 min-w-[200px]">
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">To</label>
+            <input type="date" value={to} min={from} onChange={e => setTo(e.target.value)} className={inputCls} />
+          </div>
+          <div className="flex-1 min-w-[180px]">
             <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Email to (optional — overrides the default)</label>
             <input type="text" value={recipients} onChange={e => setRecipients(e.target.value)} placeholder="accounts@example.com, ..." className={inputCls} />
           </div>

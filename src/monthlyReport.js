@@ -11,13 +11,14 @@ const BRAND = [254, 205, 40]   // #FECD28
 const INK = [17, 17, 17]       // #111111
 
 const parseLocal = (s) => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d) }
+const fmtD = (d) => d.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
 
-// Working days of one request that fall inside [mStart, mEnd], inclusive.
-function daysInMonth(r, mStart, mEnd) {
+// Working days of one request that fall inside [rStart, rEnd], inclusive.
+function daysInRange(r, rStart, rEnd) {
   const s = parseLocal(r.startDate), e = parseLocal(r.endDate)
   if (isNaN(s) || isNaN(e)) return 0
-  const a = s > mStart ? s : mStart
-  const b = e < mEnd ? e : mEnd
+  const a = s > rStart ? s : rStart
+  const b = e < rEnd ? e : rEnd
   if (b < a) return 0
   return workingDays(isoLocal(a), isoLocal(b), r.halfDay && isoLocal(s) === isoLocal(e))
 }
@@ -47,27 +48,26 @@ async function loadLogo() {
 }
 
 // Builds the jsPDF doc and returns it with the suggested file name.
-async function buildDoc({ month, users, requests }) {
-  const [y, m] = month.split('-').map(Number)
-  const mStart = new Date(y, m - 1, 1)
-  const mEnd = new Date(y, m, 0)
-  const monthLabel = mStart.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })
+// `from` / `to` are 'YYYY-MM-DD' strings (inclusive range).
+async function buildDoc({ from, to, users, requests }) {
+  const rStart = parseLocal(from)
+  const rEnd = parseLocal(to)
+  const rangeLabel = `${fmtD(rStart)} – ${fmtD(rEnd)}`
 
   // Staff rows: everyone except admins (the boss Noel + the system admin), sorted.
   const staff = users
     .filter(u => u.role !== 'admin')
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  // Scheduled leave for the month = anything not declined (so approved AND
-  // still-pending leave shows, even if the day hasn't arrived yet).
-  const counted = requests.filter(r => r.status !== STATUS.DECLINED)
+  // Only APPROVED leave counts on the report.
+  const counted = requests.filter(r => r.status === STATUS.APPROVED)
 
   const head = [['Employee', ...LEAVE_TYPES, 'Total']]
   const body = staff.map(u => {
     const mine = counted.filter(r => r.employeeId === u.id)
     let total = 0
     const cells = LEAVE_TYPES.map(type => {
-      const days = mine.filter(r => r.type === type).reduce((s, r) => s + daysInMonth(r, mStart, mEnd), 0)
+      const days = mine.filter(r => r.type === type).reduce((s, r) => s + daysInRange(r, rStart, rEnd), 0)
       total += days
       return days ? String(days) : '-'
     })
@@ -87,10 +87,10 @@ async function buildDoc({ month, users, requests }) {
   }
   doc.setTextColor(...INK)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(18)
-  doc.text('Monthly Leave Report', pageW - 14, 20, { align: 'right' })
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(12)
+  doc.text('Leave Report', pageW - 14, 20, { align: 'right' })
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(11)
   doc.setTextColor(90, 90, 90)
-  doc.text(monthLabel, pageW - 14, 28, { align: 'right' })
+  doc.text(rangeLabel, pageW - 14, 28, { align: 'right' })
   doc.setFontSize(9)
   doc.text(`Generated ${new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })}`,
     pageW - 14, 34, { align: 'right' })
@@ -108,10 +108,10 @@ async function buildDoc({ month, users, requests }) {
   })
 
   doc.setFontSize(8); doc.setTextColor(150, 150, 150)
-  doc.text('CabGlass — scheduled leave (approved & pending). Working days within the selected month.',
+  doc.text('CabGlass — approved leave only. Working days within the selected date range.',
     14, doc.internal.pageSize.getHeight() - 10)
 
-  return { doc, fileName: `CabGlass-Leave-${month}.pdf` }
+  return { doc, fileName: `CabGlass-Leave-${from}_to_${to}.pdf` }
 }
 
 // Trigger a browser download of the report.
