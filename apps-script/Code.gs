@@ -14,7 +14,10 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-06-leave-v5';
+var VERSION = '2026-06-leave-v6';
+
+// Public address of the portal, added as a link in notification emails.
+var PORTAL_URL = 'https://portal.cabglass.co.za';
 
 // Drive folder where uploaded sick notes are saved. While blank, uploads still
 // record the file name + uploader but no file is stored.
@@ -106,7 +109,7 @@ function submitRequest_(req) {
       'Type: ' + typeLabel + '\n' +
       'Dates: ' + ymd_(req.startDate) + ' to ' + ymd_(req.endDate) + ' (' + req.days + ' day(s))\n' +
       (req.reason ? 'Notes: ' + req.reason + '\n' : '') +
-      '\nPlease review it in the CabGlass portal.');
+      '\nReview and approve it here:\n' + PORTAL_URL);
   }
   return { ok: true };
 }
@@ -132,7 +135,8 @@ function decideRequest_(id, status, deciderName, note) {
             'Your leave request has been ' + status.toLowerCase() + '.\n\n' +
             'Type: ' + typeLabel + '\n' +
             'Dates: ' + ymd_(r.startDate) + ' to ' + ymd_(r.endDate) + ' (' + r.days + ' day(s))\n' +
-            (deciderName ? '\nDecided by ' + deciderName + '.' : ''));
+            (deciderName ? 'Decided by ' + deciderName + '.\n' : '') +
+            '\nView it in the portal:\n' + PORTAL_URL);
         }
         break;
       }
