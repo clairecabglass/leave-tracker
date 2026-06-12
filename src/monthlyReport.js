@@ -10,7 +10,7 @@ import { workingDays, isoLocal } from './workdays'
 const BRAND = [254, 205, 40]   // #FECD28
 const INK = [17, 17, 17]       // #111111
 
-const parseLocal = (s) => { const [y, m, d] = String(s).split('-').map(Number); return new Date(y, m - 1, d) }
+const parseLocal = (s) => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d) }
 
 // Working days of one request that fall inside [mStart, mEnd], inclusive.
 function daysInMonth(r, mStart, mEnd) {
@@ -58,11 +58,13 @@ async function buildDoc({ month, users, requests }) {
     .filter(u => u.role !== 'admin')
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  const approved = requests.filter(r => r.status === STATUS.APPROVED)
+  // Scheduled leave for the month = anything not declined (so approved AND
+  // still-pending leave shows, even if the day hasn't arrived yet).
+  const counted = requests.filter(r => r.status !== STATUS.DECLINED)
 
   const head = [['Employee', ...LEAVE_TYPES, 'Total']]
   const body = staff.map(u => {
-    const mine = approved.filter(r => r.employeeId === u.id)
+    const mine = counted.filter(r => r.employeeId === u.id)
     let total = 0
     const cells = LEAVE_TYPES.map(type => {
       const days = mine.filter(r => r.type === type).reduce((s, r) => s + daysInMonth(r, mStart, mEnd), 0)
@@ -106,7 +108,7 @@ async function buildDoc({ month, users, requests }) {
   })
 
   doc.setFontSize(8); doc.setTextColor(150, 150, 150)
-  doc.text('CabGlass — leave taken (approved). Days shown fall within the selected month.',
+  doc.text('CabGlass — scheduled leave (approved & pending). Working days within the selected month.',
     14, doc.internal.pageSize.getHeight() - 10)
 
   return { doc, fileName: `CabGlass-Leave-${month}.pdf` }

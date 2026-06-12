@@ -65,10 +65,10 @@ export function LeaveProvider({ children }) {
     return req
   }
 
-  const decideRequest = (id, status, deciderName, note = '') => {
+  const decideRequest = (id, status, deciderName) => {
     setRequests(prev => prev.map(r => r.id === id
-      ? { ...r, status, decidedBy: deciderName, decidedAt: new Date().toISOString(), decisionNote: note } : r))
-    if (LIVE) apiDecideRequest(id, status, deciderName, note).then(refresh).catch(err => console.error('Decide failed:', err))
+      ? { ...r, status, decidedBy: deciderName, decidedAt: new Date().toISOString() } : r))
+    if (LIVE) apiDecideRequest(id, status, deciderName).then(refresh).catch(err => console.error('Decide failed:', err))
   }
 
   // Revert an approved/declined request back to Pending (approver fixed a mistake).

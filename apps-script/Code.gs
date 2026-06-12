@@ -14,7 +14,7 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-06-leave-v4';
+var VERSION = '2026-06-leave-v5';
 
 // Drive folder where uploaded sick notes are saved. While blank, uploads still
 // record the file name + uploader but no file is stored.
@@ -33,7 +33,7 @@ var SICKNOTES_SHEET = 'SickNotes';
 var REPORTS_SHEET = 'MonthlyReports';
 
 var USER_COLS = ['id', 'name', 'username', 'password', 'role', 'approverId', 'startDate',
-  'annualAdjust', 'sickAdjust', 'familyAdjust'];
+  'annualAdjust', 'sickAdjust', 'familyAdjust', 'email'];
 var REQUEST_COLS = ['id', 'employeeId', 'employeeName', 'approverId', 'type', 'otherLabel',
   'startDate', 'endDate', 'days', 'reason', 'status', 'submittedAt', 'decidedBy', 'decidedAt', 'decisionNote', 'halfDay'];
 var SICKNOTE_COLS = ['id', 'employeeId', 'employeeName', 'label', 'fileName', 'uploadedAt', 'link'];
@@ -97,17 +97,48 @@ function login_(username, password) {
 
 function submitRequest_(req) {
   sheet_(REQUESTS_SHEET).appendRow(REQUEST_COLS.map(function (c) { return req[c] != null ? req[c] : ''; }));
+  // Notify the approver that a request is waiting.
+  var to = userEmailById_(req.approverId);
+  if (to) {
+    var typeLabel = req.type === 'Other' && req.otherLabel ? 'Other — ' + req.otherLabel : req.type;
+    notify_(to, 'Leave request from ' + req.employeeName,
+      req.employeeName + ' has applied for leave.\n\n' +
+      'Type: ' + typeLabel + '\n' +
+      'Dates: ' + ymd_(req.startDate) + ' to ' + ymd_(req.endDate) + ' (' + req.days + ' day(s))\n' +
+      (req.reason ? 'Notes: ' + req.reason + '\n' : '') +
+      '\nPlease review it in the CabGlass portal.');
+  }
   return { ok: true };
 }
 
 function decideRequest_(id, status, deciderName, note) {
-  var decided = status === 'Pending';
-  return updateRowById_(REQUESTS_SHEET, id, {
+  var decided = status === 'Pending'; // 'Pending' = an undo
+  var res = updateRowById_(REQUESTS_SHEET, id, {
     status: status,
     decidedBy: decided ? '' : (deciderName || ''),
     decidedAt: decided ? '' : new Date().toISOString(),
-    decisionNote: decided ? '' : (note || ''),
+    decisionNote: '',
   });
+  // Notify the employee of an approve/decline (not on undo).
+  if (!decided) {
+    var rows = readRequests_();
+    for (var i = 0; i < rows.length; i++) {
+      if (Number(rows[i].id) === Number(id)) {
+        var r = rows[i];
+        var to = userEmailById_(r.employeeId);
+        if (to) {
+          var typeLabel = r.type === 'Other' && r.otherLabel ? 'Other — ' + r.otherLabel : r.type;
+          notify_(to, 'Your leave was ' + status,
+            'Your leave request has been ' + status.toLowerCase() + '.\n\n' +
+            'Type: ' + typeLabel + '\n' +
+            'Dates: ' + ymd_(r.startDate) + ' to ' + ymd_(r.endDate) + ' (' + r.days + ' day(s))\n' +
+            (deciderName ? '\nDecided by ' + deciderName + '.' : ''));
+        }
+        break;
+      }
+    }
+  }
+  return res;
 }
 
 function cancelRequest_(id) { return deleteRowById_(REQUESTS_SHEET, id); }
@@ -131,6 +162,7 @@ function addUser_(user) {
     annualAdjust: Number(user.annualAdjust) || 0,
     sickAdjust: Number(user.sickAdjust) || 0,
     familyAdjust: Number(user.familyAdjust) || 0,
+    email: user.email || '',
   };
   sheet_(USERS_SHEET).appendRow(USER_COLS.map(function (c) { return clean[c]; }));
   return { ok: true, user: sanitize_(clean) };
@@ -225,6 +257,36 @@ function finalizeMonth_(body) {
   return { ok: true, driveLink: driveLink, emailedTo: emailedTo };
 }
 
+// ── Dates & email ───────────────────────────────────────────────────────────
+
+function tz_() {
+  return SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone() || 'Africa/Johannesburg';
+}
+
+// Normalise a leave date to 'yyyy-MM-dd'. Sheets often turns a typed date into a
+// Date cell; reading it back raw yields a UTC timestamp that breaks the client's
+// date maths (empty calendar / blank report). Formatting in the sheet's timezone
+// fixes that.
+function ymd_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, tz_(), 'yyyy-MM-dd');
+  var s = String(v == null ? '' : v);
+  return s.length >= 10 ? s.slice(0, 10) : s;
+}
+
+function userEmailById_(id) {
+  if (id == null || id === '') return '';
+  var rows = readUsers_();
+  for (var i = 0; i < rows.length; i++) if (Number(rows[i].id) === Number(id)) return rows[i].email || '';
+  return '';
+}
+
+// Fire-and-forget: never let a mail failure break the request.
+function notify_(to, subject, body) {
+  if (!to) return;
+  try { MailApp.sendEmail({ to: to, subject: subject, body: body }); }
+  catch (e) { /* ignore */ }
+}
+
 // ── Sheet helpers ───────────────────────────────────────────────────────────
 
 function headerFor_(name) {
@@ -279,6 +341,8 @@ function readUsers_() {
     u.annualAdjust = Number(u.annualAdjust) || 0;
     u.sickAdjust = Number(u.sickAdjust) || 0;
     u.familyAdjust = Number(u.familyAdjust) || 0;
+    u.startDate = ymd_(u.startDate);
+    u.email = u.email == null ? '' : String(u.email);
     return u;
   });
 }
@@ -291,6 +355,8 @@ function readRequests_() {
     r.employeeId = Number(r.employeeId);
     r.approverId = r.approverId === '' || r.approverId == null ? null : Number(r.approverId);
     r.days = Number(r.days) || 0;
+    r.startDate = ymd_(r.startDate);
+    r.endDate = ymd_(r.endDate);
     return r;
   });
 }
@@ -311,10 +377,11 @@ function sanitize_(u) {
   return {
     id: Number(u.id), name: u.name, username: u.username, role: u.role,
     approverId: u.approverId === '' || u.approverId == null ? null : Number(u.approverId),
-    startDate: u.startDate,
+    startDate: ymd_(u.startDate),
     annualAdjust: Number(u.annualAdjust) || 0,
     sickAdjust: Number(u.sickAdjust) || 0,
     familyAdjust: Number(u.familyAdjust) || 0,
+    email: u.email == null ? '' : String(u.email),
   };
 }
 
@@ -384,7 +451,7 @@ function setup() {
     ];
     var sh = sheet_(USERS_SHEET);
     seed.forEach(function (u) {
-      u.annualAdjust = 0; u.sickAdjust = 0; u.familyAdjust = 0;
+      u.annualAdjust = 0; u.sickAdjust = 0; u.familyAdjust = 0; u.email = '';
       sh.appendRow(USER_COLS.map(function (c) { return u[c]; }));
     });
   }

@@ -51,6 +51,7 @@ export default function ApplyPage() {
     e.preventDefault()
     if (days < 1) { setMsg('Please pick valid working dates.'); return }
     if (type === 'Other' && !otherLabel.trim()) { setMsg('Please specify the type of leave.'); return }
+    if (overBalance) { setMsg(''); return } // blocked — button is disabled, guard anyway
     submitRequest({ employee: user, type, otherLabel, startDate, endDate, reason, halfDay: halfDay && singleDay })
     setType(LEAVE_TYPES[0]); setOtherLabel(''); setStartDate(''); setEndDate(''); setReason(''); setHalfDay(false)
     setMsg('Leave request submitted to ' + (user.approverId ? userName(user.approverId) : 'an admin') + '.')
@@ -125,15 +126,15 @@ export default function ApplyPage() {
                     <span className="text-slate-400"> · approver: {user.approverId ? userName(user.approverId) : 'admin'}</span>
                   </p>
                   {overBalance && (
-                    <p className="text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2">
-                      ⚠️ This is {(+(days - remaining).toFixed(2))} day{days - remaining !== 1 ? 's' : ''} more {type} leave than you have left ({remaining}). You can still submit — your approver will see this.
+                    <p className="text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2">
+                      ⛔ You only have {remaining} {type} day{remaining !== 1 ? 's' : ''} left — this request is {(+(days - remaining).toFixed(2))} too many. Reduce the dates or choose Unpaid.
                     </p>
                   )}
                 </div>
               )}
               {msg && <p className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</p>}
-              <button type="submit" style={{ backgroundColor: '#FECD28' }}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-[#111111] hover:brightness-95 transition-all">
+              <button type="submit" disabled={overBalance} style={{ backgroundColor: '#FECD28' }}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-[#111111] disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-95 transition-all">
                 <CalendarPlus size={15} /> Submit request
               </button>
             </form>

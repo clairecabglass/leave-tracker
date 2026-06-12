@@ -3,7 +3,9 @@
 
 const pad = (n) => String(n).padStart(2, '0')
 export const isoLocal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-export const parseLocal = (s) => { const [y, m, d] = String(s).split('-').map(Number); return new Date(y, m - 1, d) }
+// Parse a date string as a LOCAL date. Tolerate full ISO timestamps by taking
+// just the 'YYYY-MM-DD' prefix (the backend normalises, this is belt-and-braces).
+export const parseLocal = (s) => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d) }
 
 // Easter Sunday (Anonymous Gregorian "computus").
 function easter(year) {

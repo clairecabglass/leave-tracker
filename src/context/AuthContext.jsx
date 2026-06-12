@@ -119,6 +119,7 @@ export function AuthProvider({ children }) {
       role: data.role === 'admin' ? 'admin' : 'employee',
       approverId: data.approverId ? Number(data.approverId) : null,
       startDate: data.startDate || '',
+      email: (data.email || '').trim(),
     }
     if (LIVE) {
       const res = await apiAddUser(newUser)

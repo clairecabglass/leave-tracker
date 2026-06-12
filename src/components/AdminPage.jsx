@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { UserPlus, Trash2, Shield, User, Download, SlidersHorizontal, Send } from 'lucide-react'
+import { useState } from 'react'
+import { UserPlus, Trash2, Shield, User, Download, SlidersHorizontal, Send, Pencil } from 'lucide-react'
 import { useAuth, ROLES } from '../context/AuthContext'
 import { useLeave } from '../context/LeaveContext'
 import { balancesFor } from '../leaveCalc'
@@ -11,25 +11,27 @@ const num = (v) => Number(v) || 0
 export default function AdminPage() {
   const { user, users, addUser, updateUser, deleteUser } = useAuth()
   const { requests } = useLeave()
-  const [form, setForm] = useState({ name: '', username: '', password: '', role: 'employee', approverId: '', startDate: '' })
+  const [form, setForm] = useState({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '' })
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
   const now = new Date()
   const [reportMonth, setReportMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
+  const [editing, setEditing] = useState(null)   // user being edited
+  const [edit, setEdit] = useState({})           // edit form values
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const setE = (k, v) => setEdit(f => ({ ...f, [k]: v }))
   const inputCls = 'w-full px-3 py-2.5 text-sm border border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand/40 transition-colors'
   const cellSelect = 'text-xs border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 dark:text-slate-100 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand/40'
-  const numCell = 'w-20 text-xs border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 dark:text-slate-100 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand/40'
 
-  const flash = (setter, text) => { setter(text); setTimeout(() => setter(''), 3500) }
+  const flash = (setter, text) => { setter(text); setTimeout(() => setter(''), 4000) }
 
   const submit = async (e) => {
     e.preventDefault()
     setError(''); setMsg('')
     const res = await addUser(form)
     if (res.error) { setError(res.error); return }
-    setForm({ name: '', username: '', password: '', role: 'employee', approverId: '', startDate: '' })
+    setForm({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '' })
     flash(setMsg, `Added ${res.user.name}.`)
   }
 
@@ -44,13 +46,35 @@ export default function AdminPage() {
     if (res?.error) flash(setError, res.error)
   }
 
-  // Admin types a "remaining" number; we store it as an adjustment so accrual
-  // and taken-days keep working underneath.  adjust = desired - (remaining - adjustOld)
-  const setRemaining = (u, field, adjustKey, balRemaining, desiredRaw) => {
-    const desired = num(desiredRaw)
-    const adjustOld = num(u[adjustKey])
-    const adjustNew = +(desired - (balRemaining - adjustOld)).toFixed(2)
-    patch(u.id, adjustKey, adjustNew)
+  // ── Edit user modal ──
+  const openEdit = (u) => {
+    const bal = balancesFor(u, requests)
+    setEditing(u)
+    setEdit({
+      name: u.name, username: u.username, password: '', email: u.email || '',
+      annualLeft: bal.annual.remaining, sickLeft: bal.sick.remaining, familyLeft: bal.family.remaining,
+    })
+  }
+
+  const saveEdit = async () => {
+    setError('')
+    const u = editing
+    const bal = balancesFor(u, requests)
+    // Convert desired "days left" back into stored adjustments.
+    const adj = (desired, remaining, adjustOld) => +(num(desired) - (remaining - num(adjustOld))).toFixed(2)
+    const p = {
+      name: edit.name.trim(),
+      username: edit.username.trim(),
+      email: edit.email.trim(),
+      annualAdjust: adj(edit.annualLeft, bal.annual.remaining, u.annualAdjust),
+      sickAdjust: adj(edit.sickLeft, bal.sick.remaining, u.sickAdjust),
+      familyAdjust: adj(edit.familyLeft, bal.family.remaining, u.familyAdjust),
+    }
+    if (edit.password.trim()) p.password = edit.password.trim()
+    const res = await updateUser(u.id, p)
+    if (res?.error) { flash(setError, res.error); return }
+    setEditing(null)
+    flash(setMsg, `Saved ${p.name}.`)
   }
 
   const [downloading, setDownloading] = useState(false)
@@ -58,12 +82,9 @@ export default function AdminPage() {
   const [recipients, setRecipients] = useState('')
   const downloadReport = async () => {
     setDownloading(true)
-    try {
-      await downloadMonthlyPdf({ month: reportMonth, users, requests })
-    } catch (err) {
-      flash(setError, 'Could not build the report.')
-      console.error('Report failed:', err)
-    } finally { setDownloading(false) }
+    try { await downloadMonthlyPdf({ month: reportMonth, users, requests }) }
+    catch (err) { flash(setError, 'Could not build the report.'); console.error('Report failed:', err) }
+    finally { setDownloading(false) }
   }
 
   const monthLabel = (() => {
@@ -78,16 +99,12 @@ export default function AdminPage() {
     setFinalizing(true)
     try {
       const { base64, fileName } = await monthlyPdfBase64({ month: reportMonth, users, requests })
-      const res = await apiFinalizeMonth({
-        month: reportMonth, monthLabel, pdfBase64: base64, fileName,
-        finalizedBy: user.name, recipients: recipients.trim(),
-      })
+      const res = await apiFinalizeMonth({ month: reportMonth, monthLabel, pdfBase64: base64, fileName, finalizedBy: user.name, recipients: recipients.trim() })
       if (res?.error) { flash(setError, res.error); return }
       const where = [res.emailedTo && `emailed to ${res.emailedTo}`, res.driveLink && 'saved to Drive'].filter(Boolean).join(' and ')
       flash(setMsg, `${monthLabel} finalized — ${where || 'recorded'}.`)
-    } catch (err) {
-      flash(setError, 'Finalize failed.'); console.error('Finalize failed:', err)
-    } finally { setFinalizing(false) }
+    } catch (err) { flash(setError, 'Finalize failed.'); console.error('Finalize failed:', err) }
+    finally { setFinalizing(false) }
   }
 
   return (
@@ -102,7 +119,7 @@ export default function AdminPage() {
       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6 space-y-4">
         <div>
           <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100"><Download size={18} className="text-brand-dark" /> Monthly leave report</h2>
-          <p className="text-xs text-slate-400 mt-1">A branded PDF: each employee with the days of leave <span className="font-semibold">taken</span> per type that month. <span className="font-semibold">Download</span> a copy, or <span className="font-semibold">Finalize</span> to email it to the accountants and save it to Drive.</p>
+          <p className="text-xs text-slate-400 mt-1">A branded PDF: each employee with the days of leave <span className="font-semibold">scheduled</span> per type that month (approved &amp; pending). <span className="font-semibold">Download</span> a copy, or <span className="font-semibold">Finalize</span> to email it to the accountants and save it to Drive.</p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
           <div>
@@ -115,16 +132,12 @@ export default function AdminPage() {
           </div>
           <button onClick={downloadReport} disabled={downloading}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 disabled:opacity-50 hover:bg-slate-100 dark:hover:bg-slate-700 transition-all">
-            {downloading
-              ? <span className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
-              : <Download size={15} />}
+            {downloading ? <span className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" /> : <Download size={15} />}
             {downloading ? 'Building…' : 'Download PDF'}
           </button>
           <button onClick={finalize} disabled={finalizing} style={{ backgroundColor: '#FECD28' }}
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[#111111] disabled:opacity-50 hover:brightness-95 transition-all">
-            {finalizing
-              ? <span className="w-4 h-4 border-2 border-[#111111]/30 border-t-[#111111] rounded-full animate-spin" />
-              : <Send size={15} />}
+            {finalizing ? <span className="w-4 h-4 border-2 border-[#111111]/30 border-t-[#111111] rounded-full animate-spin" /> : <Send size={15} />}
             {finalizing ? 'Finalizing…' : 'Finalize & email'}
           </button>
         </div>
@@ -147,6 +160,10 @@ export default function AdminPage() {
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Password</label>
             <input value={form.password} onChange={e => set('password', e.target.value)} required placeholder="Temporary password" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Email (for notifications)</label>
+            <input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="amy@cabglass.co.za" className={inputCls} />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Role</label>
@@ -178,7 +195,7 @@ export default function AdminPage() {
       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
           <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">Users <span className="text-slate-400 font-normal">({users.length})</span></h2>
-          <p className="text-xs text-slate-400 mt-0.5">Set each person's approver and role inline. "Approver" rights come automatically from being assigned to someone.</p>
+          <p className="text-xs text-slate-400 mt-0.5">Change role/approver/start date inline. Use <span className="font-semibold">Edit</span> for name, password, email and leave balances.</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -188,7 +205,7 @@ export default function AdminPage() {
                 <th className="px-6 py-3">Role</th>
                 <th className="px-6 py-3">Approved by</th>
                 <th className="px-6 py-3">Start date</th>
-                <th className="px-6 py-3 text-right">Remove</th>
+                <th className="px-6 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
@@ -201,7 +218,7 @@ export default function AdminPage() {
                       </div>
                       <div>
                         <div className="font-semibold text-slate-800 dark:text-slate-100">{u.name}{u.id === user.id && <span className="text-xs text-slate-400 font-normal"> (you)</span>}</div>
-                        <div className="text-xs text-slate-400">@{u.username}</div>
+                        <div className="text-xs text-slate-400">@{u.username}{u.email ? ` · ${u.email}` : ''}</div>
                       </div>
                     </div>
                   </td>
@@ -219,12 +236,18 @@ export default function AdminPage() {
                   <td className="px-6 py-3">
                     <input type="date" value={u.startDate || ''} onChange={e => patch(u.id, 'startDate', e.target.value)} className={cellSelect} />
                   </td>
-                  <td className="px-6 py-3 text-right">
-                    <button onClick={() => remove(u)} disabled={u.id === user.id}
-                      title={u.id === user.id ? "You can't remove yourself" : 'Remove user'}
-                      className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors">
-                      <Trash2 size={16} />
-                    </button>
+                  <td className="px-6 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => openEdit(u)} title="Edit user"
+                        className="p-2 rounded-lg text-slate-400 hover:text-brand-dark hover:bg-brand/10 transition-colors">
+                        <Pencil size={16} />
+                      </button>
+                      <button onClick={() => remove(u)} disabled={u.id === user.id}
+                        title={u.id === user.id ? "You can't remove yourself" : 'Remove user'}
+                        className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors">
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -233,11 +256,11 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* Leave balances */}
+      {/* Leave balances (read-only overview; edit via the pencil) */}
       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700">
           <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100"><SlidersHorizontal size={18} className="text-brand-dark" /> Leave balances</h2>
-          <p className="text-xs text-slate-400 mt-0.5">Days each person has <span className="font-semibold">left</span>. Edit a number to override — annual still accrues and taken days are still deducted automatically.</p>
+          <p className="text-xs text-slate-400 mt-0.5">Days each person has <span className="font-semibold">left</span>. Edit a person to override a number.</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -255,18 +278,9 @@ export default function AdminPage() {
                 return (
                   <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/40">
                     <td className="px-6 py-3 font-semibold text-slate-800 dark:text-slate-100">{u.name}</td>
-                    <td className="px-6 py-3">
-                      <input key={`a${u.id}-${bal.annual.remaining}`} type="number" step="0.25" defaultValue={bal.annual.remaining} className={numCell}
-                        onBlur={e => setRemaining(u, 'annual', 'annualAdjust', bal.annual.remaining, e.target.value)} />
-                    </td>
-                    <td className="px-6 py-3">
-                      <input key={`s${u.id}-${bal.sick.remaining}`} type="number" defaultValue={bal.sick.remaining} className={numCell}
-                        onBlur={e => setRemaining(u, 'sick', 'sickAdjust', bal.sick.remaining, e.target.value)} />
-                    </td>
-                    <td className="px-6 py-3">
-                      <input key={`f${u.id}-${bal.family.remaining}`} type="number" defaultValue={bal.family.remaining} className={numCell}
-                        onBlur={e => setRemaining(u, 'family', 'familyAdjust', bal.family.remaining, e.target.value)} />
-                    </td>
+                    <td className="px-6 py-3 text-slate-600 dark:text-slate-300">{bal.annual.remaining}</td>
+                    <td className="px-6 py-3 text-slate-600 dark:text-slate-300">{bal.sick.remaining}</td>
+                    <td className="px-6 py-3 text-slate-600 dark:text-slate-300">{bal.family.remaining}</td>
                   </tr>
                 )
               })}
@@ -274,6 +288,52 @@ export default function AdminPage() {
           </table>
         </div>
       </div>
+
+      {/* Edit user modal */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={() => setEditing(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-800 shadow-xl border border-slate-200 dark:border-slate-700 p-6 max-h-[90vh] overflow-y-auto" onMouseDown={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 mb-4">Edit {editing.name}</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Full name</label>
+                <input value={edit.name} onChange={e => setE('name', e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Username</label>
+                <input value={edit.username} onChange={e => setE('username', e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">New password (leave blank to keep)</label>
+                <input value={edit.password} onChange={e => setE('password', e.target.value)} placeholder="••••••••" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Email (for notifications)</label>
+                <input type="email" value={edit.email} onChange={e => setE('email', e.target.value)} placeholder="name@cabglass.co.za" className={inputCls} />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Annual left</label>
+                  <input type="number" step="0.25" value={edit.annualLeft} onChange={e => setE('annualLeft', e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Sick left</label>
+                  <input type="number" value={edit.sickLeft} onChange={e => setE('sickLeft', e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Family left</label>
+                  <input type="number" value={edit.familyLeft} onChange={e => setE('familyLeft', e.target.value)} className={inputCls} />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 mt-6">
+              <button onClick={() => setEditing(null)} className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">Cancel</button>
+              <button onClick={saveEdit} style={{ backgroundColor: '#FECD28' }}
+                className="px-5 py-2 rounded-xl text-sm font-bold text-[#111111] hover:brightness-95 transition-all">Save changes</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

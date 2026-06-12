@@ -20,8 +20,8 @@ const colourFor = (id) => PALETTE[Math.abs(Number(id)) % PALETTE.length]
 
 // Local Y-M-D key (avoid toISOString, which shifts to UTC and breaks day alignment).
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-// Parse a 'YYYY-MM-DD' string as a LOCAL date, not UTC.
-const parseLocal = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d) }
+// Parse a date string as a LOCAL date (tolerate full ISO timestamps).
+const parseLocal = (s) => { const [y, m, d] = String(s).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d) }
 
 export default function CalendarPage() {
   const { requests } = useLeave()
