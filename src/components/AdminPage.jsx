@@ -16,9 +16,11 @@ export default function AdminPage() {
   const [msg, setMsg] = useState('')
   const now = new Date()
   const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  // Report date range, defaulting to the current month.
+  // Report: either a custom date range, or a full calendar year.
+  const [reportMode, setReportMode] = useState('range') // 'range' | 'year'
   const [from, setFrom] = useState(ymd(new Date(now.getFullYear(), now.getMonth(), 1)))
   const [to, setTo] = useState(ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)))
+  const [year, setYear] = useState(now.getFullYear())
   const [editing, setEditing] = useState(null)   // user being edited
   const [edit, setEdit] = useState({})           // edit form values
 
@@ -85,13 +87,20 @@ export default function AdminPage() {
   const [recipients, setRecipients] = useState('')
   const pl = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d) }
   const fmtD = (s) => pl(s).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
-  const rangeLabel = from && to ? `${fmtD(from)} – ${fmtD(to)}` : ''
-  const rangeOk = from && to && from <= to
+
+  // Effective range fed to the report — a custom range, or the whole year.
+  const effFrom = reportMode === 'year' ? `${year}-01-01` : from
+  const effTo = reportMode === 'year' ? `${year}-12-31` : to
+  const rangeLabel = reportMode === 'year'
+    ? `${year} (Annual)`
+    : (from && to ? `${fmtD(from)} – ${fmtD(to)}` : '')
+  const rangeKey = reportMode === 'year' ? `${year}` : `${effFrom}_to_${effTo}`
+  const rangeOk = reportMode === 'year' ? !!year : (from && to && from <= to)
 
   const downloadReport = async () => {
     if (!rangeOk) { flash(setError, 'Pick a valid date range.'); return }
     setDownloading(true)
-    try { await downloadMonthlyPdf({ from, to, users, requests }) }
+    try { await downloadMonthlyPdf({ from: effFrom, to: effTo, users, requests }) }
     catch (err) { flash(setError, 'Could not build the report.'); console.error('Report failed:', err) }
     finally { setDownloading(false) }
   }
@@ -103,8 +112,8 @@ export default function AdminPage() {
     if (!window.confirm(`Finalize ${rangeLabel}? This emails the report to the accountants and saves a copy to Drive.`)) return
     setFinalizing(true)
     try {
-      const { base64, fileName } = await monthlyPdfBase64({ from, to, users, requests })
-      const res = await apiFinalizeMonth({ month: `${from}_to_${to}`, monthLabel: rangeLabel, pdfBase64: base64, fileName, finalizedBy: user.name, recipients: recipients.trim() })
+      const { base64, fileName } = await monthlyPdfBase64({ from: effFrom, to: effTo, users, requests })
+      const res = await apiFinalizeMonth({ month: rangeKey, monthLabel: rangeLabel, pdfBase64: base64, fileName, finalizedBy: user.name, recipients: recipients.trim() })
       if (res?.error) { flash(setError, res.error); return }
       const where = [res.emailedTo && `emailed to ${res.emailedTo}`, res.driveLink && 'saved to Drive'].filter(Boolean).join(' and ')
       flash(setMsg, `${rangeLabel} finalized — ${where || 'recorded'}.`)
@@ -124,17 +133,37 @@ export default function AdminPage() {
       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6 space-y-4">
         <div>
           <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100"><Download size={18} className="text-brand-dark" /> Leave report</h2>
-          <p className="text-xs text-slate-400 mt-1">A branded PDF: each employee with the days of <span className="font-semibold">approved</span> leave per type over the chosen date range. <span className="font-semibold">Download</span> a copy, or <span className="font-semibold">Finalize</span> to email it to the accountants and save it to Drive.</p>
+          <p className="text-xs text-slate-400 mt-1">A branded PDF: each employee with the days of <span className="font-semibold">approved</span> leave per type. Choose a custom date range or a whole year. <span className="font-semibold">Download</span> a copy, or <span className="font-semibold">Finalize</span> to email it to the accountants and save it to Drive.</p>
+        </div>
+        {/* Mode toggle */}
+        <div className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-900 rounded-lg p-1">
+          {[{ k: 'range', l: 'Date range' }, { k: 'year', l: 'Annual (year)' }].map(({ k, l }) => (
+            <button key={k} onClick={() => setReportMode(k)}
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                reportMode === k ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
+              {l}
+            </button>
+          ))}
         </div>
         <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">From</label>
-            <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">To</label>
-            <input type="date" value={to} min={from} onChange={e => setTo(e.target.value)} className={inputCls} />
-          </div>
+          {reportMode === 'range' ? (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">From</label>
+                <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">To</label>
+                <input type="date" value={to} min={from} onChange={e => setTo(e.target.value)} className={inputCls} />
+              </div>
+            </>
+          ) : (
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Year</label>
+              <input type="number" value={year} min="2000" max="2100" onChange={e => setYear(Number(e.target.value))} className={inputCls} />
+            </div>
+          )}
           <div className="flex-1 min-w-[180px]">
             <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Email to (optional — overrides the default)</label>
             <input type="text" value={recipients} onChange={e => setRecipients(e.target.value)} placeholder="accounts@example.com, ..." className={inputCls} />
