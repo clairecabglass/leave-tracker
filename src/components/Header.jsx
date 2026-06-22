@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Moon, Sun, LogOut, ChevronDown, CalendarDays, BookText, Users, ExternalLink } from 'lucide-react'
+import { Moon, Sun, LogOut, ChevronDown, CalendarDays, BookText, Users, ExternalLink, NotebookPen } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 // Sub-pages that live under the "Leave" dropdown.
@@ -31,6 +31,7 @@ export default function Header({ activeTab, setActiveTab, dark, toggleDark }) {
 
   const flatTabs = [
     { key: 'calendar', label: 'Calendar', icon: CalendarDays, show: true },
+    { key: 'meetings', label: 'Meetings', icon: NotebookPen,  show: true },
     { key: 'pp',       label: 'P&P',      icon: BookText,     show: true, href: PP_URL },
     { key: 'admin',    label: 'Admin',    icon: Users,        show: isAdmin },
   ].filter(t => t.show)

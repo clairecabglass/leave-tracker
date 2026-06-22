@@ -11,7 +11,7 @@ const num = (v) => Number(v) || 0
 export default function AdminPage() {
   const { user, users, addUser, updateUser, deleteUser } = useAuth()
   const { requests } = useLeave()
-  const [form, setForm] = useState({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '' })
+  const [form, setForm] = useState({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '', canEditMeetings: false })
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
   const now = new Date()
@@ -36,7 +36,7 @@ export default function AdminPage() {
     setError(''); setMsg('')
     const res = await addUser(form)
     if (res.error) { setError(res.error); return }
-    setForm({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '' })
+    setForm({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '', canEditMeetings: false })
     flash(setMsg, `Added ${res.user.name}.`)
   }
 
@@ -58,6 +58,7 @@ export default function AdminPage() {
     setEdit({
       name: u.name, username: u.username, password: '', email: u.email || '',
       annualLeft: bal.annual.remaining, sickLeft: bal.sick.remaining, familyLeft: bal.family.remaining,
+      canEditMeetings: !!u.canEditMeetings,
     })
   }
 
@@ -74,6 +75,7 @@ export default function AdminPage() {
       annualAdjust: adj(edit.annualLeft, bal.annual.remaining, u.annualAdjust),
       sickAdjust: adj(edit.sickLeft, bal.sick.remaining, u.sickAdjust),
       familyAdjust: adj(edit.familyLeft, bal.family.remaining, u.familyAdjust),
+      canEditMeetings: !!edit.canEditMeetings,
     }
     if (edit.password.trim()) p.password = edit.password.trim()
     const res = await updateUser(u.id, p)
@@ -220,6 +222,11 @@ export default function AdminPage() {
             <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Start date</label>
             <input type="date" value={form.startDate} onChange={e => set('startDate', e.target.value)} className={inputCls} />
           </div>
+          <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 sm:col-span-2 lg:col-span-3">
+            <input type="checkbox" checked={form.canEditMeetings} onChange={e => set('canEditMeetings', e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand/40" />
+            Can edit meeting notes
+          </label>
           <div className="sm:col-span-2 lg:col-span-3">
             <button type="submit" style={{ backgroundColor: '#FECD28' }}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[#111111] hover:brightness-95 transition-all">
@@ -363,6 +370,11 @@ export default function AdminPage() {
                   <input type="number" value={edit.familyLeft} onChange={e => setE('familyLeft', e.target.value)} className={inputCls} />
                 </div>
               </div>
+              <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                <input type="checkbox" checked={!!edit.canEditMeetings} onChange={e => setE('canEditMeetings', e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-brand focus:ring-brand/40" />
+                Can edit meeting notes
+              </label>
             </div>
             <div className="flex items-center justify-end gap-2 mt-6">
               <button onClick={() => setEditing(null)} className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">Cancel</button>

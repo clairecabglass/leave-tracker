@@ -14,7 +14,7 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-06-leave-v6';
+var VERSION = '2026-06-leave-v7';
 
 // Public address of the portal, added as a link in notification emails.
 var PORTAL_URL = 'https://portal.cabglass.co.za';
@@ -34,9 +34,13 @@ var USERS_SHEET = 'Users';
 var REQUESTS_SHEET = 'LeaveRequests';
 var SICKNOTES_SHEET = 'SickNotes';
 var REPORTS_SHEET = 'MonthlyReports';
+var MEETINGS_SHEET = 'Meetings';
+var AGENDA_SHEET = 'AgendaItems';
 
 var USER_COLS = ['id', 'name', 'username', 'password', 'role', 'approverId', 'startDate',
-  'annualAdjust', 'sickAdjust', 'familyAdjust', 'email'];
+  'annualAdjust', 'sickAdjust', 'familyAdjust', 'email', 'canEditMeetings'];
+var MEETING_COLS = ['id', 'date', 'title', 'notes', 'createdBy', 'updatedAt'];
+var AGENDA_COLS = ['id', 'text', 'addedBy', 'addedById', 'createdAt'];
 var REQUEST_COLS = ['id', 'employeeId', 'employeeName', 'approverId', 'type', 'otherLabel',
   'startDate', 'endDate', 'days', 'reason', 'status', 'submittedAt', 'decidedBy', 'decidedAt', 'decisionNote', 'halfDay'];
 var SICKNOTE_COLS = ['id', 'employeeId', 'employeeName', 'label', 'fileName', 'uploadedAt', 'link'];
@@ -50,7 +54,8 @@ function doGet(e) {
     if (action === 'ping') return json_({ ok: true, version: VERSION });
     if (!secretOk_(e.parameter && e.parameter.secret)) return json_({ error: 'Unauthorized' });
     if (action === 'getData') {
-      return json_({ ok: true, users: readUsersSafe_(), requests: readRequests_(), sickNotes: readSickNotes_(), reports: readReports_() });
+      return json_({ ok: true, users: readUsersSafe_(), requests: readRequests_(), sickNotes: readSickNotes_(),
+        reports: readReports_(), meetings: readMeetings_(), agenda: readAgenda_() });
     }
     return json_({ error: 'Unknown action: ' + action });
   } catch (err) {
@@ -76,6 +81,11 @@ function doPost(e) {
       case 'uploadSickNote': return json_(uploadSickNote_(body.note));
       case 'deleteSickNote': return json_(deleteSickNote_(body.id));
       case 'finalizeMonth':  return json_(finalizeMonth_(body));
+      case 'addAgendaItem':  return json_(addAgendaItem_(body.item));
+      case 'deleteAgendaItem': return json_(deleteRowById_(AGENDA_SHEET, body.id));
+      case 'addMeeting':     return json_(addMeeting_(body.meeting));
+      case 'updateMeeting':  return json_(updateMeeting_(body.id, body.patch));
+      case 'deleteMeeting':  return json_(deleteRowById_(MEETINGS_SHEET, body.id));
       default:               return json_({ error: 'Unknown action: ' + body.action });
     }
   } catch (err) {
@@ -167,6 +177,7 @@ function addUser_(user) {
     sickAdjust: Number(user.sickAdjust) || 0,
     familyAdjust: Number(user.familyAdjust) || 0,
     email: user.email || '',
+    canEditMeetings: !!user.canEditMeetings,
   };
   sheet_(USERS_SHEET).appendRow(USER_COLS.map(function (c) { return clean[c]; }));
   return { ok: true, user: sanitize_(clean) };
@@ -291,13 +302,49 @@ function notify_(to, subject, body) {
   catch (e) { /* ignore */ }
 }
 
+// ── Meetings & agenda ───────────────────────────────────────────────────────
+
+function addAgendaItem_(item) {
+  var rec = {
+    id: item.id || Date.now(),
+    text: (item.text || '').trim(),
+    addedBy: item.addedBy || '',
+    addedById: Number(item.addedById) || '',
+    createdAt: item.createdAt || new Date().toISOString(),
+  };
+  sheet_(AGENDA_SHEET).appendRow(AGENDA_COLS.map(function (c) { return rec[c]; }));
+  return { ok: true };
+}
+
+function addMeeting_(m) {
+  var rec = {
+    id: m.id || Date.now(),
+    date: m.date || '',
+    title: (m.title || '').trim(),
+    notes: m.notes || '',
+    createdBy: m.createdBy || '',
+    updatedAt: new Date().toISOString(),
+  };
+  sheet_(MEETINGS_SHEET).appendRow(MEETING_COLS.map(function (c) { return rec[c]; }));
+  return { ok: true };
+}
+
+function updateMeeting_(id, patch) {
+  var clean = {};
+  for (var k in patch) clean[k] = patch[k];
+  clean.updatedAt = new Date().toISOString();
+  return updateRowById_(MEETINGS_SHEET, id, clean);
+}
+
 // ── Sheet helpers ───────────────────────────────────────────────────────────
 
 function headerFor_(name) {
   if (name === USERS_SHEET) return USER_COLS;
   if (name === REQUESTS_SHEET) return REQUEST_COLS;
   if (name === SICKNOTES_SHEET) return SICKNOTE_COLS;
-  return REPORT_COLS;
+  if (name === REPORTS_SHEET) return REPORT_COLS;
+  if (name === MEETINGS_SHEET) return MEETING_COLS;
+  return AGENDA_COLS;
 }
 
 function sheet_(name) {
@@ -347,6 +394,7 @@ function readUsers_() {
     u.familyAdjust = Number(u.familyAdjust) || 0;
     u.startDate = ymd_(u.startDate);
     u.email = u.email == null ? '' : String(u.email);
+    u.canEditMeetings = u.canEditMeetings === true || u.canEditMeetings === 'TRUE' || u.canEditMeetings === 'true' || u.canEditMeetings === 1 || u.canEditMeetings === '1';
     return u;
   });
 }
@@ -377,6 +425,14 @@ function readReports_() {
   return readObjects_(REPORTS_SHEET);
 }
 
+function readMeetings_() {
+  return readObjects_(MEETINGS_SHEET).map(function (m) { m.id = Number(m.id); m.date = ymd_(m.date); return m; });
+}
+
+function readAgenda_() {
+  return readObjects_(AGENDA_SHEET).map(function (a) { a.id = Number(a.id); a.addedById = a.addedById === '' || a.addedById == null ? null : Number(a.addedById); return a; });
+}
+
 function sanitize_(u) {
   return {
     id: Number(u.id), name: u.name, username: u.username, role: u.role,
@@ -386,6 +442,7 @@ function sanitize_(u) {
     sickAdjust: Number(u.sickAdjust) || 0,
     familyAdjust: Number(u.familyAdjust) || 0,
     email: u.email == null ? '' : String(u.email),
+    canEditMeetings: !!u.canEditMeetings,
   };
 }
 
@@ -437,11 +494,15 @@ function setup() {
   sheet_(REQUESTS_SHEET);
   sheet_(SICKNOTES_SHEET);
   sheet_(REPORTS_SHEET);
+  sheet_(MEETINGS_SHEET);
+  sheet_(AGENDA_SHEET);
   // Migrate older sheets: add any columns introduced in later versions.
   ensureColumns_(USERS_SHEET);
   ensureColumns_(REQUESTS_SHEET);
   ensureColumns_(SICKNOTES_SHEET);
   ensureColumns_(REPORTS_SHEET);
+  ensureColumns_(MEETINGS_SHEET);
+  ensureColumns_(AGENDA_SHEET);
   if (readUsers_().length === 0) {
     var seed = [
       { id: 1, name: 'Claire',     username: 'admin',     password: 'admin123',     role: 'admin',    approverId: '', startDate: '2020-01-01' },
@@ -455,7 +516,7 @@ function setup() {
     ];
     var sh = sheet_(USERS_SHEET);
     seed.forEach(function (u) {
-      u.annualAdjust = 0; u.sickAdjust = 0; u.familyAdjust = 0; u.email = '';
+      u.annualAdjust = 0; u.sickAdjust = 0; u.familyAdjust = 0; u.email = ''; u.canEditMeetings = false;
       sh.appendRow(USER_COLS.map(function (c) { return u[c]; }));
     });
   }

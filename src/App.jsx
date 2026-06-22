@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { LeaveProvider } from './context/LeaveContext'
+import { MeetingsProvider } from './context/MeetingsContext'
 import { useDarkMode } from './hooks/useDarkMode'
 import Header from './components/Header'
 import LoginPage from './components/LoginPage'
@@ -8,6 +9,7 @@ import ApplyPage from './components/ApplyPage'
 import ApprovalsPage from './components/ApprovalsPage'
 import SickNotesPage from './components/SickNotesPage'
 import CalendarPage from './components/CalendarPage'
+import MeetingsPage from './components/MeetingsPage'
 import AdminPage from './components/AdminPage'
 
 function Portal() {
@@ -28,6 +30,7 @@ function Portal() {
     : activeTab === 'approvals' && (isApprover || isAdmin) ? <ApprovalsPage />
     : activeTab === 'sicknotes' ? <SickNotesPage />
     : activeTab === 'calendar' ? <CalendarPage />
+    : activeTab === 'meetings' ? <MeetingsPage />
     : <ApplyPage />
 
   return (
@@ -42,7 +45,9 @@ export default function App() {
   return (
     <AuthProvider>
       <LeaveProvider>
-        <Portal />
+        <MeetingsProvider>
+          <Portal />
+        </MeetingsProvider>
       </LeaveProvider>
     </AuthProvider>
   )

@@ -120,6 +120,7 @@ export function AuthProvider({ children }) {
       approverId: data.approverId ? Number(data.approverId) : null,
       startDate: data.startDate || '',
       email: (data.email || '').trim(),
+      canEditMeetings: !!data.canEditMeetings,
     }
     // Optimistic: update the UI now, sync to the server in the background.
     setUsers(prev => [...prev, newUser])
@@ -159,11 +160,12 @@ export function AuthProvider({ children }) {
 
   const isAdmin = user?.role === 'admin'
   const isApprover = !!user && isApproverFor(user.id)
+  const canEditMeetings = isAdmin || !!user?.canEditMeetings
 
   return (
     <AuthContext.Provider value={{
       user, users, loading, login, logout, addUser, updateUser, deleteUser,
-      userName, reportsOf, isApproverFor, isAdmin, isApprover, refresh,
+      userName, reportsOf, isApproverFor, isAdmin, isApprover, canEditMeetings, refresh,
     }}>
       {children}
     </AuthContext.Provider>
