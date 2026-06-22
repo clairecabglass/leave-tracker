@@ -6,7 +6,7 @@
 import { STATUS } from './context/LeaveContext'
 
 const ANNUAL_RATE = 1.25       // days accrued per full month worked
-const SICK_ENTITLEMENT = 33    // days per 3-year cycle (resets on the start-date anniversary)
+const SICK_ENTITLEMENT = 30    // days per 3-year cycle (resets on the start-date anniversary)
 const SICK_CYCLE_YEARS = 3
 const FAMILY_ENTITLEMENT = 3   // days per calendar year (resets 1 January)
 
