@@ -62,7 +62,7 @@ export default function ApplyPage() {
 
   const submit = (e) => {
     e.preventDefault()
-    if (days < 1) { setMsg('Please pick valid working dates.'); return }
+    if (days <= 0) { setMsg('Please pick valid working dates.'); return }
     if (type === 'Other' && !otherLabel.trim()) { setMsg('Please specify the type of leave.'); return }
     if (blockSubmit) { setMsg(''); return } // blocked — button is disabled, guard anyway
     if (onBehalf) {
