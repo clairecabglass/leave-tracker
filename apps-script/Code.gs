@@ -14,7 +14,7 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-06-leave-v7';
+var VERSION = '2026-06-leave-v8';
 
 // Public address of the portal, added as a link in notification emails.
 var PORTAL_URL = 'https://portal.cabglass.co.za';
@@ -110,16 +110,29 @@ function login_(username, password) {
 
 function submitRequest_(req) {
   sheet_(REQUESTS_SHEET).appendRow(REQUEST_COLS.map(function (c) { return req[c] != null ? req[c] : ''; }));
-  // Notify the approver that a request is waiting.
-  var to = userEmailById_(req.approverId);
-  if (to) {
-    var typeLabel = req.type === 'Other' && req.otherLabel ? 'Other — ' + req.otherLabel : req.type;
-    notify_(to, 'Leave request from ' + req.employeeName,
-      req.employeeName + ' has applied for leave.\n\n' +
-      'Type: ' + typeLabel + '\n' +
-      'Dates: ' + ymd_(req.startDate) + ' to ' + ymd_(req.endDate) + ' (' + req.days + ' day(s))\n' +
-      (req.reason ? 'Notes: ' + req.reason + '\n' : '') +
-      '\nReview and approve it here:\n' + PORTAL_URL);
+  var typeLabel = req.type === 'Other' && req.otherLabel ? 'Other — ' + req.otherLabel : req.type;
+  var dateLine = 'Type: ' + typeLabel + '\n' +
+    'Dates: ' + ymd_(req.startDate) + ' to ' + ymd_(req.endDate) + ' (' + req.days + ' day(s))\n';
+  if (req.status === 'Approved') {
+    // On-behalf entry (admin/approver logged the leave): notify the employee it was recorded.
+    var toEmp = userEmailById_(req.employeeId);
+    if (toEmp) {
+      notify_(toEmp, 'Leave recorded for you',
+        (req.decidedBy ? req.decidedBy + ' has' : 'Leave has been') + ' recorded leave on your behalf.\n\n' +
+        dateLine +
+        (req.reason ? 'Notes: ' + req.reason + '\n' : '') +
+        '\nView it in the portal:\n' + PORTAL_URL);
+    }
+  } else {
+    // Normal self-application: notify the approver that a request is waiting.
+    var to = userEmailById_(req.approverId);
+    if (to) {
+      notify_(to, 'Leave request from ' + req.employeeName,
+        req.employeeName + ' has applied for leave.\n\n' +
+        dateLine +
+        (req.reason ? 'Notes: ' + req.reason + '\n' : '') +
+        '\nReview and approve it here:\n' + PORTAL_URL);
+    }
   }
   return { ok: true };
 }

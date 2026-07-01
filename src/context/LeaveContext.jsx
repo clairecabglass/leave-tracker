@@ -65,6 +65,30 @@ export function LeaveProvider({ children }) {
     return req
   }
 
+  // Admin/approver logs leave directly ON BEHALF of someone — lands Approved.
+  // `enteredBy` = the name of the person recording it (used in the notification).
+  const enterLeave = ({ employee, type, otherLabel, startDate, endDate, reason, halfDay, enteredBy }) => {
+    const now = new Date().toISOString()
+    const req = {
+      id: Date.now(),
+      employeeId: employee.id,
+      employeeName: employee.name,
+      approverId: employee.approverId ?? null,
+      type,
+      otherLabel: type === 'Other' ? (otherLabel || '').trim() : '',
+      startDate, endDate,
+      halfDay: !!halfDay,
+      days: countDays(startDate, endDate, halfDay),
+      reason: (reason || '').trim(),
+      status: STATUS.APPROVED,
+      submittedAt: now,
+      decidedBy: enteredBy || '', decidedAt: now, decisionNote: '',
+    }
+    setRequests(prev => [req, ...prev])
+    if (LIVE) apiSubmitRequest(req).then(refresh).catch(err => console.error('Enter leave failed:', err))
+    return req
+  }
+
   const decideRequest = (id, status, deciderName) => {
     setRequests(prev => prev.map(r => r.id === id
       ? { ...r, status, decidedBy: deciderName, decidedAt: new Date().toISOString() } : r))
@@ -115,7 +139,7 @@ export function LeaveProvider({ children }) {
   return (
     <LeaveContext.Provider value={{
       requests, sickNotes,
-      submitRequest, decideRequest, undoRequest, cancelRequest,
+      submitRequest, enterLeave, decideRequest, undoRequest, cancelRequest,
       uploadSickNote, deleteSickNote, refresh,
     }}>
       {children}
