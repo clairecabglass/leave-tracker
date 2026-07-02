@@ -14,7 +14,7 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-06-leave-v8';
+var VERSION = '2026-07-leave-v12';
 
 // Public address of the portal, added as a link in notification emails.
 var PORTAL_URL = 'https://portal.cabglass.co.za';
@@ -24,11 +24,11 @@ var PORTAL_URL = 'https://portal.cabglass.co.za';
 var SICK_NOTES_FOLDER_ID = '1W-YitHNqNpTKcHMgaVWakSXju5z4mmPO';
 
 // Finalize-month: where the monthly PDF is saved, and who it's emailed to.
-// REPORTS_FOLDER_ID can reuse a Drive folder; ACCOUNTANTS_EMAIL can be one or
-// several comma-separated addresses. The admin can also type recipients in the
-// UI, which overrides ACCOUNTANTS_EMAIL for that send.
+// REPORTS_FOLDER_ID can reuse a Drive folder; ACCOUNTANTS_EMAIL is the default
+// payroll recipient — the admin can override it per-send in the UI.
 var REPORTS_FOLDER_ID = '';
-var ACCOUNTANTS_EMAIL = '';
+var ACCOUNTANTS_EMAIL = 'admin@neetlingtax.co.za';
+
 
 var USERS_SHEET = 'Users';
 var REQUESTS_SHEET = 'LeaveRequests';
@@ -36,9 +36,13 @@ var SICKNOTES_SHEET = 'SickNotes';
 var REPORTS_SHEET = 'MonthlyReports';
 var MEETINGS_SHEET = 'Meetings';
 var AGENDA_SHEET = 'AgendaItems';
+var INCENTIVES_SHEET = 'Incentives';
+var COMMISSION_SHEET = 'CommissionData';
 
 var USER_COLS = ['id', 'name', 'username', 'password', 'role', 'approverId', 'startDate',
-  'annualAdjust', 'sickAdjust', 'familyAdjust', 'email', 'canEditMeetings'];
+  'annualAdjust', 'sickAdjust', 'familyAdjust', 'email', 'canEditMeetings', 'salesTarget', 'commissionRole'];
+var INCENTIVES_COLS = ['id', 'userId', 'userName', 'period', 'amount', 'note', 'setBy', 'setAt', 'emailedAt'];
+var COMMISSION_COLS = ['period', 'payload', 'updatedAt', 'updatedBy'];
 var MEETING_COLS = ['id', 'date', 'title', 'notes', 'createdBy', 'updatedAt'];
 var AGENDA_COLS = ['id', 'text', 'addedBy', 'addedById', 'createdAt'];
 var REQUEST_COLS = ['id', 'employeeId', 'employeeName', 'approverId', 'type', 'otherLabel',
@@ -55,7 +59,8 @@ function doGet(e) {
     if (!secretOk_(e.parameter && e.parameter.secret)) return json_({ error: 'Unauthorized' });
     if (action === 'getData') {
       return json_({ ok: true, users: readUsersSafe_(), requests: readRequests_(), sickNotes: readSickNotes_(),
-        reports: readReports_(), meetings: readMeetings_(), agenda: readAgenda_() });
+        reports: readReports_(), meetings: readMeetings_(), agenda: readAgenda_(),
+        incentives: readIncentives_(), commission: readCommissionPeriods_() });
     }
     return json_({ error: 'Unknown action: ' + action });
   } catch (err) {
@@ -81,12 +86,18 @@ function doPost(e) {
       case 'uploadSickNote': return json_(uploadSickNote_(body.note));
       case 'deleteSickNote': return json_(deleteSickNote_(body.id));
       case 'finalizeMonth':  return json_(finalizeMonth_(body));
-      case 'addAgendaItem':  return json_(addAgendaItem_(body.item));
-      case 'deleteAgendaItem': return json_(deleteRowById_(AGENDA_SHEET, body.id));
-      case 'addMeeting':     return json_(addMeeting_(body.meeting));
-      case 'updateMeeting':  return json_(updateMeeting_(body.id, body.patch));
-      case 'deleteMeeting':  return json_(deleteRowById_(MEETINGS_SHEET, body.id));
-      default:               return json_({ error: 'Unknown action: ' + body.action });
+      case 'addAgendaItem':       return json_(addAgendaItem_(body.item));
+      case 'deleteAgendaItem':    return json_(deleteRowById_(AGENDA_SHEET, body.id));
+      case 'addMeeting':          return json_(addMeeting_(body.meeting));
+      case 'updateMeeting':       return json_(updateMeeting_(body.id, body.patch));
+      case 'deleteMeeting':       return json_(deleteRowById_(MEETINGS_SHEET, body.id));
+      case 'setIncentive':          return json_(setIncentive_(body.incentive));
+      case 'bulkSendIncentives':    return json_(bulkSendIncentives_(body.period, body.sentBy));
+      case 'sendSalesReport':       return json_(sendSalesReport_(body.salesData, body.period, body.sentBy));
+      case 'saveCommissionPeriod':  return json_(saveCommissionPeriod_(body.period, body.payload, body.updatedBy));
+      case 'sendMonthEndPayouts':   return json_(sendMonthEndPayouts_(body.period, body.payouts, body.sentBy));
+      case 'sendDailyProgress':     return json_(sendDailyProgress_(body.period, body.progress, body.sentBy));
+      default:                    return json_({ error: 'Unknown action: ' + body.action });
     }
   } catch (err) {
     return json_({ error: String(err) });
@@ -191,6 +202,8 @@ function addUser_(user) {
     familyAdjust: Number(user.familyAdjust) || 0,
     email: user.email || '',
     canEditMeetings: !!user.canEditMeetings,
+    salesTarget: Number(user.salesTarget) || 0,
+    commissionRole: user.commissionRole ? String(user.commissionRole).trim() : '',
   };
   sheet_(USERS_SHEET).appendRow(USER_COLS.map(function (c) { return clean[c]; }));
   return { ok: true, user: sanitize_(clean) };
@@ -264,14 +277,35 @@ function finalizeMonth_(body) {
   var recipients = (body.recipients || ACCOUNTANTS_EMAIL || '').trim();
   var emailedTo = '';
   if (recipients) {
-    MailApp.sendEmail({
-      to: recipients,
-      subject: 'CabGlass leave report — ' + (body.monthLabel || body.month),
-      body: 'Attached is the finalised leave report for ' + (body.monthLabel || body.month) + '.\n\n'
-        + 'Finalised by ' + (body.finalizedBy || 'admin') + '.'
-        + (driveLink ? '\nDrive copy: ' + driveLink : ''),
-      attachments: [blob],
-    });
+    var key = PropertiesService.getScriptProperties().getProperty('RESEND_API_KEY');
+    if (key) {
+      // Resend with PDF attachment (base64)
+      var pdfB64 = Utilities.base64Encode(bytes);
+      UrlFetchApp.fetch('https://api.resend.com/emails', {
+        method: 'post',
+        contentType: 'application/json',
+        headers: { 'Authorization': 'Bearer ' + key },
+        payload: JSON.stringify({
+          from: FROM_NAME + ' <' + FROM_EMAIL + '>',
+          to: recipients.split(',').map(function(e){ return e.trim(); }).filter(Boolean),
+          subject: 'CabGlass leave report — ' + (body.monthLabel || body.month),
+          text: 'Attached is the finalised leave report for ' + (body.monthLabel || body.month) + '.\n\n'
+            + 'Finalised by ' + (body.finalizedBy || 'admin') + '.'
+            + (driveLink ? '\nDrive copy: ' + driveLink : ''),
+          attachments: [{ filename: body.fileName || ('Leave-' + body.month + '.pdf'), content: pdfB64 }],
+        }),
+        muteHttpExceptions: true,
+      });
+    } else {
+      MailApp.sendEmail({
+        to: recipients,
+        subject: 'CabGlass leave report — ' + (body.monthLabel || body.month),
+        body: 'Attached is the finalised leave report for ' + (body.monthLabel || body.month) + '.\n\n'
+          + 'Finalised by ' + (body.finalizedBy || 'admin') + '.'
+          + (driveLink ? '\nDrive copy: ' + driveLink : ''),
+        attachments: [blob],
+      });
+    }
     emailedTo = recipients;
   }
 
@@ -308,11 +342,29 @@ function userEmailById_(id) {
   return '';
 }
 
+var FROM_EMAIL = 'admin@cabglass.co.za';
+var FROM_NAME  = 'CabGlass Leave Tracker';
+
 // Fire-and-forget: never let a mail failure break the request.
+// Sends via Resend (resend.com) — API key stored in Script Properties as RESEND_API_KEY.
 function notify_(to, subject, body) {
   if (!to) return;
-  try { MailApp.sendEmail({ to: to, subject: subject, body: body }); }
-  catch (e) { /* ignore */ }
+  try {
+    var key = PropertiesService.getScriptProperties().getProperty('RESEND_API_KEY');
+    if (!key) { MailApp.sendEmail({ to: to, subject: subject, body: body }); return; }
+    UrlFetchApp.fetch('https://api.resend.com/emails', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'Authorization': 'Bearer ' + key },
+      payload: JSON.stringify({
+        from: FROM_NAME + ' <' + FROM_EMAIL + '>',
+        to: to.split(',').map(function(e){ return e.trim(); }).filter(Boolean),
+        subject: subject,
+        text: body,
+      }),
+      muteHttpExceptions: true,
+    });
+  } catch (e) { /* ignore */ }
 }
 
 // ── Meetings & agenda ───────────────────────────────────────────────────────
@@ -357,6 +409,8 @@ function headerFor_(name) {
   if (name === SICKNOTES_SHEET) return SICKNOTE_COLS;
   if (name === REPORTS_SHEET) return REPORT_COLS;
   if (name === MEETINGS_SHEET) return MEETING_COLS;
+  if (name === INCENTIVES_SHEET) return INCENTIVES_COLS;
+  if (name === COMMISSION_SHEET) return COMMISSION_COLS;
   return AGENDA_COLS;
 }
 
@@ -405,6 +459,8 @@ function readUsers_() {
     u.annualAdjust = Number(u.annualAdjust) || 0;
     u.sickAdjust = Number(u.sickAdjust) || 0;
     u.familyAdjust = Number(u.familyAdjust) || 0;
+    u.salesTarget = Number(u.salesTarget) || 0;
+    u.commissionRole = u.commissionRole ? String(u.commissionRole).trim() : '';
     u.startDate = ymd_(u.startDate);
     u.email = u.email == null ? '' : String(u.email);
     u.canEditMeetings = u.canEditMeetings === true || u.canEditMeetings === 'TRUE' || u.canEditMeetings === 'true' || u.canEditMeetings === 1 || u.canEditMeetings === '1';
@@ -446,6 +502,222 @@ function readAgenda_() {
   return readObjects_(AGENDA_SHEET).map(function (a) { a.id = Number(a.id); a.addedById = a.addedById === '' || a.addedById == null ? null : Number(a.addedById); return a; });
 }
 
+function readIncentives_() {
+  return readObjects_(INCENTIVES_SHEET).map(function (i) {
+    i.id = Number(i.id);
+    i.userId = Number(i.userId);
+    i.amount = Number(i.amount) || 0;
+    return i;
+  });
+}
+
+// ── Incentives ───────────────────────────────────────────────────────────────
+
+// Upsert: one record per userId + period. Updates in-place if found, appends otherwise.
+function setIncentive_(incentive) {
+  var sh = sheet_(INCENTIVES_SHEET);
+  var values = sh.getDataRange().getValues();
+  if (values.length < 1) { sh.appendRow(INCENTIVES_COLS); values = sh.getDataRange().getValues(); }
+  var header = values[0];
+  var userIdCol = header.indexOf('userId');
+  var periodCol = header.indexOf('period');
+  for (var r = 1; r < values.length; r++) {
+    if (Number(values[r][userIdCol]) === Number(incentive.userId) &&
+        String(values[r][periodCol]) === String(incentive.period)) {
+      for (var key in incentive) {
+        var c = header.indexOf(key);
+        if (c >= 0) sh.getRange(r + 1, c + 1).setValue(incentive[key]);
+      }
+      return { ok: true };
+    }
+  }
+  var rec = {
+    id: incentive.id || Date.now(),
+    userId: Number(incentive.userId),
+    userName: incentive.userName || '',
+    period: incentive.period || '',
+    amount: Number(incentive.amount) || 0,
+    note: incentive.note || '',
+    setBy: incentive.setBy || '',
+    setAt: incentive.setAt || new Date().toISOString(),
+    emailedAt: '',
+  };
+  sh.appendRow(INCENTIVES_COLS.map(function (c) { return rec[c]; }));
+  return { ok: true };
+}
+
+// Send each user with a set incentive for the period an email with their amount + note.
+function bulkSendIncentives_(period, sentBy) {
+  var incentives = readIncentives_().filter(function (i) { return String(i.period) === String(period); });
+  if (!incentives.length) return { error: 'No incentives set for ' + period + '.' };
+  var users = readUsers_();
+  var sent = 0;
+  var periodLabel = formatPeriod_(period);
+  incentives.forEach(function (inc) {
+    if (!inc.amount && !inc.note) return;
+    var u = users.find(function (u) { return Number(u.id) === Number(inc.userId); });
+    var email = u ? u.email : '';
+    if (!email) return;
+    var body = 'Hi ' + (u ? u.name : inc.userName) + ',\n\n' +
+      'Your incentive for ' + periodLabel + ':\n\n' +
+      (inc.amount ? 'Amount: R ' + Number(inc.amount).toFixed(2) + '\n' : '') +
+      (inc.note ? 'Note: ' + inc.note + '\n' : '') +
+      '\nKind regards,\nCabGlass Management\n' + PORTAL_URL;
+    notify_(email, 'Your incentive for ' + periodLabel, body);
+    updateRowById_(INCENTIVES_SHEET, inc.id, { emailedAt: new Date().toISOString() });
+    sent++;
+  });
+  return { ok: true, sent: sent };
+}
+
+// Email each sales person their achieved figure vs target for the period.
+// salesData = [{ userId, userName, email, target, achieved, period }]
+function sendSalesReport_(salesData, period, sentBy) {
+  if (!salesData || !salesData.length) return { error: 'No sales data provided.' };
+  var periodLabel = formatPeriod_(period);
+  var sent = 0;
+  salesData.forEach(function (row) {
+    if (!row.email) return;
+    var pct = row.target > 0 ? Math.round((row.achieved / row.target) * 100) : null;
+    var body = 'Hi ' + row.userName + ',\n\n' +
+      'Here is your sales performance for ' + periodLabel + ':\n\n' +
+      'Target:   R ' + Number(row.target).toFixed(2) + '\n' +
+      'Achieved: R ' + Number(row.achieved).toFixed(2) + '\n' +
+      (pct !== null ? 'Progress: ' + pct + '%\n' : '') +
+      '\n' + (pct !== null && pct >= 100
+        ? 'Congratulations! You\'ve hit your target for the month!'
+        : pct !== null
+          ? 'Keep pushing — you\'re R ' + (Number(row.target) - Number(row.achieved)).toFixed(2) + ' away from your target.'
+          : '') +
+      '\n\nKind regards,\nCabGlass Management\n' + PORTAL_URL;
+    notify_(row.email, 'Your sales performance — ' + periodLabel, body);
+    sent++;
+  });
+  return { ok: true, sent: sent };
+}
+
+// Format 'YYYY-MM' → 'Month YYYY' for email subjects.
+function formatPeriod_(period) {
+  var months = ['January','February','March','April','May','June',
+                'July','August','September','October','November','December'];
+  var parts = String(period).split('-');
+  var m = parseInt(parts[1], 10) - 1;
+  return (months[m] || parts[1]) + ' ' + parts[0];
+}
+
+// ── Commission data ──────────────────────────────────────────────────────────
+
+function readCommissionPeriods_() {
+  var rows = readObjects_(COMMISSION_SHEET);
+  var result = {};
+  rows.forEach(function (r) {
+    try { result[String(r.period)] = JSON.parse(String(r.payload)); } catch (e) {}
+  });
+  return result;
+}
+
+// Upsert one period's payload (JSON string stored in 'payload' column).
+function saveCommissionPeriod_(period, payload, updatedBy) {
+  var sh = sheet_(COMMISSION_SHEET);
+  var values = sh.getDataRange().getValues();
+  if (values.length < 1) { sh.appendRow(COMMISSION_COLS); values = sh.getDataRange().getValues(); }
+  var header = values[0];
+  var pCol = header.indexOf('period');
+  var payCol = header.indexOf('payload');
+  var atCol = header.indexOf('updatedAt');
+  var byCol = header.indexOf('updatedBy');
+  var payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  var now = new Date().toISOString();
+  for (var r = 1; r < values.length; r++) {
+    if (String(values[r][pCol]) === String(period)) {
+      sh.getRange(r + 1, payCol + 1).setValue(payloadStr);
+      sh.getRange(r + 1, atCol + 1).setValue(now);
+      sh.getRange(r + 1, byCol + 1).setValue(updatedBy || '');
+      return { ok: true };
+    }
+  }
+  sh.appendRow([period, payloadStr, now, updatedBy || '']);
+  return { ok: true };
+}
+
+// Send individual month-end payout emails.
+// payouts = [{ userId, userName, email, role, breakdown, total }]
+function sendMonthEndPayouts_(period, payouts, sentBy) {
+  if (!payouts || !payouts.length) return { error: 'No payouts provided.' };
+  var periodLabel = formatPeriod_(period);
+  var sent = 0;
+  payouts.forEach(function (p) {
+    if (!p.email) return;
+    var lines = ['Hi ' + p.userName + ',', '',
+      'Here is your incentive breakdown for ' + periodLabel + ':', ''];
+    if (p.breakdown) {
+      Object.keys(p.breakdown).forEach(function (k) {
+        if (p.breakdown[k] !== null && p.breakdown[k] !== undefined && p.breakdown[k] !== 0) {
+          lines.push(k + ': R ' + Number(p.breakdown[k]).toFixed(2));
+        }
+      });
+      lines.push('');
+    }
+    lines.push('Total payout: R ' + Number(p.total).toFixed(2));
+    lines.push('');
+    lines.push('Kind regards,\nCabGlass Management\n' + PORTAL_URL);
+    notify_(p.email, 'Your incentive for ' + periodLabel, lines.join('\n'));
+    sent++;
+  });
+  return { ok: true, sent: sent };
+}
+
+// Send a single combined daily progress email to all recipients.
+// progress = { date, daysElapsed, workingDays, reps: [{ name, cumulative, monthlyTarget }] }
+function sendDailyProgress_(period, progress, sentBy) {
+  if (!progress) return { error: 'No progress data.' };
+  var users = readUsers_();
+  var periodLabel = formatPeriod_(period);
+  var date = progress.date || new Date().toISOString().slice(0, 10);
+  var days = Number(progress.daysElapsed) || 1;
+  var workingDays = Number(progress.workingDays) || 20;
+  var reps = progress.reps || [];
+
+  var lines = ['Daily sales progress — ' + periodLabel + ' (' + date + ')', ''];
+  reps.forEach(function (rep) {
+    var cum = Number(rep.cumulative) || 0;
+    var target = Number(rep.monthlyTarget) || 0;
+    var dailyTarget = workingDays > 0 ? target / workingDays : 0;
+    var expected = dailyTarget * days;
+    var delta = cum - expected;
+    var projected = days > 0 ? (cum / days) * workingDays : 0;
+    var daysLeft = workingDays - days;
+    var newDailyRate = daysLeft > 0 ? (target - cum) / daysLeft : 0;
+
+    lines.push(rep.name + ':');
+    lines.push('  Cumulative: R ' + fmt_(cum));
+    lines.push('  ' + (delta >= 0 ? 'Ahead' : 'Behind') + ': R ' + fmt_(Math.abs(delta)));
+    lines.push('  Projected month-end: R ' + fmt_(projected));
+    lines.push('  New required daily rate: R ' + fmt_(Math.max(0, newDailyRate)));
+    lines.push('');
+  });
+  lines.push('Portal: ' + PORTAL_URL);
+
+  // Build recipient list: all reps with email + admin(s)
+  var toList = [];
+  reps.forEach(function (rep) {
+    if (rep.email) toList.push(rep.email);
+  });
+  var admins = users.filter(function (u) { return u.role === 'admin' && u.email; });
+  admins.forEach(function (u) { if (toList.indexOf(u.email) < 0) toList.push(u.email); });
+  if (progress.extraRecipients) {
+    String(progress.extraRecipients).split(',').forEach(function (e) {
+      var t = e.trim(); if (t && toList.indexOf(t) < 0) toList.push(t);
+    });
+  }
+
+  if (!toList.length) return { error: 'No recipients found — add email addresses to user accounts.' };
+  notify_(toList.join(','), 'Daily sales progress — ' + date, lines.join('\n'));
+  return { ok: true, sent: toList.length };
+}
+
+function fmt_(n) { return Math.round(n).toLocaleString(); }
+
 function sanitize_(u) {
   return {
     id: Number(u.id), name: u.name, username: u.username, role: u.role,
@@ -454,6 +726,8 @@ function sanitize_(u) {
     annualAdjust: Number(u.annualAdjust) || 0,
     sickAdjust: Number(u.sickAdjust) || 0,
     familyAdjust: Number(u.familyAdjust) || 0,
+    salesTarget: Number(u.salesTarget) || 0,
+    commissionRole: u.commissionRole ? String(u.commissionRole).trim() : '',
     email: u.email == null ? '' : String(u.email),
     canEditMeetings: !!u.canEditMeetings,
   };
@@ -509,6 +783,8 @@ function setup() {
   sheet_(REPORTS_SHEET);
   sheet_(MEETINGS_SHEET);
   sheet_(AGENDA_SHEET);
+  sheet_(INCENTIVES_SHEET);
+  sheet_(COMMISSION_SHEET);
   // Migrate older sheets: add any columns introduced in later versions.
   ensureColumns_(USERS_SHEET);
   ensureColumns_(REQUESTS_SHEET);
@@ -516,6 +792,8 @@ function setup() {
   ensureColumns_(REPORTS_SHEET);
   ensureColumns_(MEETINGS_SHEET);
   ensureColumns_(AGENDA_SHEET);
+  ensureColumns_(INCENTIVES_SHEET);
+  ensureColumns_(COMMISSION_SHEET);
   if (readUsers_().length === 0) {
     var seed = [
       { id: 1, name: 'Claire',     username: 'admin',     password: 'admin123',     role: 'admin',    approverId: '', startDate: '2020-01-01' },

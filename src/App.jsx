@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { LeaveProvider } from './context/LeaveContext'
 import { MeetingsProvider } from './context/MeetingsContext'
+import { IncentivesProvider } from './context/IncentivesContext'
 import { useDarkMode } from './hooks/useDarkMode'
 import Header from './components/Header'
 import LoginPage from './components/LoginPage'
@@ -11,6 +12,7 @@ import SickNotesPage from './components/SickNotesPage'
 import CalendarPage from './components/CalendarPage'
 import MeetingsPage from './components/MeetingsPage'
 import AdminPage from './components/AdminPage'
+import IncentivesPage from './components/IncentivesPage'
 
 function Portal() {
   const { user, isAdmin, isApprover } = useAuth()
@@ -21,12 +23,14 @@ function Portal() {
   useEffect(() => {
     if (activeTab === 'admin' && !isAdmin) setActiveTab('apply')
     if (activeTab === 'approvals' && !(isApprover || isAdmin)) setActiveTab('apply')
+    if (activeTab === 'incentives' && !isAdmin) setActiveTab('apply')
   }, [isAdmin, isApprover, activeTab])
 
   if (!user) return <LoginPage />
 
   const page =
     activeTab === 'admin' && isAdmin ? <AdminPage />
+    : activeTab === 'incentives' && isAdmin ? <IncentivesPage />
     : activeTab === 'approvals' && (isApprover || isAdmin) ? <ApprovalsPage />
     : activeTab === 'sicknotes' ? <SickNotesPage />
     : activeTab === 'calendar' ? <CalendarPage />
@@ -46,7 +50,9 @@ export default function App() {
     <AuthProvider>
       <LeaveProvider>
         <MeetingsProvider>
-          <Portal />
+          <IncentivesProvider>
+            <Portal />
+          </IncentivesProvider>
         </MeetingsProvider>
       </LeaveProvider>
     </AuthProvider>

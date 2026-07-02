@@ -86,7 +86,7 @@ export default function AdminPage() {
 
   const [downloading, setDownloading] = useState(false)
   const [finalizing, setFinalizing] = useState(false)
-  const [recipients, setRecipients] = useState('')
+  const [recipients, setRecipients] = useState('admin@neetlingtax.co.za')
   const pl = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d) }
   const fmtD = (s) => pl(s).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
 
@@ -167,8 +167,8 @@ export default function AdminPage() {
             </div>
           )}
           <div className="flex-1 min-w-[180px]">
-            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Email to (optional — overrides the default)</label>
-            <input type="text" value={recipients} onChange={e => setRecipients(e.target.value)} placeholder="accounts@example.com, ..." className={inputCls} />
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Email to</label>
+            <input type="text" value={recipients} onChange={e => setRecipients(e.target.value)} placeholder="admin@neetlingtax.co.za" className={inputCls} />
           </div>
           <button onClick={downloadReport} disabled={downloading}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 disabled:opacity-50 hover:bg-slate-100 dark:hover:bg-slate-700 transition-all">
