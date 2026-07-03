@@ -42,6 +42,8 @@ export const apiSendSalesReport        = (salesData, period, sentBy) => apiPost(
 export const apiSaveCommissionPeriod   = (period, payload, updatedBy) => apiPost('saveCommissionPeriod', { period, payload, updatedBy })
 export const apiSendMonthEndPayouts    = (period, payouts, sentBy) => apiPost('sendMonthEndPayouts', { period, payouts, sentBy })
 export const apiSendDailyProgress      = (period, progress, sentBy) => apiPost('sendDailyProgress', { period, progress, sentBy })
+export const apiSaveSettings           = (patch, updatedBy) => apiPost('saveSettings', { patch, updatedBy })
+export const apiSendAuditorReport      = (payload) => apiPost('sendAuditorReport', payload)
 export const apiAddAgendaItem = (item) => apiPost('addAgendaItem', { item })
 export const apiDeleteAgendaItem = (id) => apiPost('deleteAgendaItem', { id })
 export const apiAddMeeting = (meeting) => apiPost('addMeeting', { meeting })

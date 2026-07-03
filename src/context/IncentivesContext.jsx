@@ -3,12 +3,19 @@ import {
   LIVE, fetchData,
   apiSetIncentive, apiBulkSendIncentives, apiSendSalesReport,
   apiSaveCommissionPeriod, apiSendMonthEndPayouts, apiSendDailyProgress,
+  apiSaveSettings, apiSendAuditorReport,
 } from '../api'
 
 const IncentivesContext = createContext(null)
 
 const INCENTIVES_KEY  = 'leave_incentives'
 const COMMISSION_KEY  = 'leave_commission'
+const SETTINGS_KEY    = 'leave_settings'
+
+// Admin-configurable settings (auditor email + Pabbly mail hooks).
+export function defaultSettings() {
+  return { auditorEmail: '', incentiveHook: '', leaveHook: '' }
+}
 
 function loadList(key) {
   try { const r = localStorage.getItem(key); if (r) { const l = JSON.parse(r); if (Array.isArray(l)) return l } } catch {}
@@ -35,9 +42,11 @@ export function defaultPeriodData() {
 export function IncentivesProvider({ children }) {
   const [incentives,        setIncentives]        = useState(() => loadList(INCENTIVES_KEY))
   const [commissionPeriods, setCommissionPeriods] = useState(() => loadObj(COMMISSION_KEY))
+  const [settings,          setSettings]          = useState(() => ({ ...defaultSettings(), ...loadObj(SETTINGS_KEY) }))
 
   useEffect(() => { localStorage.setItem(INCENTIVES_KEY,  JSON.stringify(incentives))        }, [incentives])
   useEffect(() => { localStorage.setItem(COMMISSION_KEY, JSON.stringify(commissionPeriods)) }, [commissionPeriods])
+  useEffect(() => { localStorage.setItem(SETTINGS_KEY,   JSON.stringify(settings))          }, [settings])
 
   const refresh = async () => {
     if (!LIVE) return
@@ -45,9 +54,24 @@ export function IncentivesProvider({ children }) {
       const data = await fetchData()
       if (data?.incentives)  setIncentives(data.incentives)
       if (data?.commission)  setCommissionPeriods(data.commission)
+      if (data?.settings)    setSettings(s => ({ ...defaultSettings(), ...data.settings }))
     } catch (err) { console.error('Load incentives failed:', err) }
   }
   useEffect(() => { refresh() }, [])
+
+  // Optimistic settings save (admin only).
+  const saveSettings = async (patch, updatedBy) => {
+    setSettings(s => ({ ...s, ...patch }))
+    if (LIVE) { const res = await apiSaveSettings(patch, updatedBy); if (res?.error) refresh(); return res }
+    return { ok: true }
+  }
+
+  // Email the date-range report to the auditors (+ the incentive Pabbly hook).
+  // Backend reads the auditor address and hook from saved settings.
+  const sendAuditorReport = async ({ from, to, base64, fileName, sentBy }) => {
+    if (LIVE) return await apiSendAuditorReport({ from, to, base64, fileName, sentBy })
+    return { ok: true, note: 'Mock mode — no email sent.' }
+  }
 
   // ── Generic incentives (legacy bulk per-user per-period) ──
   const saveIncentive = (record) => {
@@ -110,6 +134,7 @@ export function IncentivesProvider({ children }) {
       incentives, saveIncentive, bulkSendIncentives, sendSalesReport, refresh,
       commissionPeriods, getPeriodData, updatePeriodData, saveCommissionPeriod,
       sendMonthEndPayouts, sendDailyProgress,
+      settings, saveSettings, sendAuditorReport,
     }}>
       {children}
     </IncentivesContext.Provider>

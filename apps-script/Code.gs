@@ -14,7 +14,7 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-07-leave-v12';
+var VERSION = '2026-07-leave-v13';
 
 // Public address of the portal, added as a link in notification emails.
 var PORTAL_URL = 'https://portal.cabglass.co.za';
@@ -38,6 +38,10 @@ var MEETINGS_SHEET = 'Meetings';
 var AGENDA_SHEET = 'AgendaItems';
 var INCENTIVES_SHEET = 'Incentives';
 var COMMISSION_SHEET = 'CommissionData';
+var SETTINGS_SHEET = 'Settings';
+var SETTINGS_COLS = ['key', 'value', 'updatedAt', 'updatedBy'];
+// Keys we store in the Settings sheet (admin-configurable).
+var SETTINGS_KEYS = ['auditorEmail', 'incentiveHook', 'leaveHook'];
 
 var USER_COLS = ['id', 'name', 'username', 'password', 'role', 'approverId', 'startDate',
   'annualAdjust', 'sickAdjust', 'familyAdjust', 'email', 'canEditMeetings', 'salesTarget', 'commissionRole'];
@@ -60,7 +64,7 @@ function doGet(e) {
     if (action === 'getData') {
       return json_({ ok: true, users: readUsersSafe_(), requests: readRequests_(), sickNotes: readSickNotes_(),
         reports: readReports_(), meetings: readMeetings_(), agenda: readAgenda_(),
-        incentives: readIncentives_(), commission: readCommissionPeriods_() });
+        incentives: readIncentives_(), commission: readCommissionPeriods_(), settings: readSettings_() });
     }
     return json_({ error: 'Unknown action: ' + action });
   } catch (err) {
@@ -97,6 +101,8 @@ function doPost(e) {
       case 'saveCommissionPeriod':  return json_(saveCommissionPeriod_(body.period, body.payload, body.updatedBy));
       case 'sendMonthEndPayouts':   return json_(sendMonthEndPayouts_(body.period, body.payouts, body.sentBy));
       case 'sendDailyProgress':     return json_(sendDailyProgress_(body.period, body.progress, body.sentBy));
+      case 'saveSettings':          return json_(saveSettings_(body.patch, body.updatedBy));
+      case 'sendAuditorReport':     return json_(sendAuditorReport_(body));
       default:                    return json_({ error: 'Unknown action: ' + body.action });
     }
   } catch (err) {
@@ -120,6 +126,17 @@ function login_(username, password) {
 // ── Requests ────────────────────────────────────────────────────────────────
 
 function submitRequest_(req) {
+  // Reject overlapping leave for the same person (Pending or Approved already on file).
+  var reqStart = ymd_(req.startDate), reqEnd = ymd_(req.endDate);
+  var existing = readRequests_();
+  for (var x = 0; x < existing.length; x++) {
+    var ex = existing[x];
+    if (Number(ex.employeeId) === Number(req.employeeId) &&
+        (ex.status === 'Pending' || ex.status === 'Approved') &&
+        ymd_(ex.startDate) <= reqEnd && reqStart <= ymd_(ex.endDate)) {
+      return { error: 'Overlapping leave already exists for this period (' + ymd_(ex.startDate) + ' to ' + ymd_(ex.endDate) + ').' };
+    }
+  }
   sheet_(REQUESTS_SHEET).appendRow(REQUEST_COLS.map(function (c) { return req[c] != null ? req[c] : ''; }));
   var typeLabel = req.type === 'Other' && req.otherLabel ? 'Other — ' + req.otherLabel : req.type;
   var dateLine = 'Type: ' + typeLabel + '\n' +
@@ -274,7 +291,9 @@ function finalizeMonth_(body) {
     driveLink = file.getUrl();
   }
 
-  var recipients = (body.recipients || ACCOUNTANTS_EMAIL || '').trim();
+  // Recipients = the chosen accountant address plus the leave Pabbly hook (Drive drop-off).
+  var leaveHook = (readSettings_().leaveHook || '').trim();
+  var recipients = [(body.recipients || ACCOUNTANTS_EMAIL || '').trim(), leaveHook].filter(Boolean).join(',');
   var emailedTo = '';
   if (recipients) {
     var key = PropertiesService.getScriptProperties().getProperty('RESEND_API_KEY');
@@ -319,6 +338,72 @@ function finalizeMonth_(body) {
   return { ok: true, driveLink: driveLink, emailedTo: emailedTo };
 }
 
+// ── Settings (auditor email + Pabbly mail hooks) ─────────────────────────────
+
+function readSettings_() {
+  var rows = readObjects_(SETTINGS_SHEET);
+  var out = { auditorEmail: '', incentiveHook: '', leaveHook: '' };
+  rows.forEach(function (r) { if (r.key && out.hasOwnProperty(r.key)) out[String(r.key)] = String(r.value == null ? '' : r.value); });
+  return out;
+}
+
+// Upsert one or more settings keys.
+function saveSettings_(patch, updatedBy) {
+  var sh = sheet_(SETTINGS_SHEET);
+  var values = sh.getDataRange().getValues();
+  var header = values[0];
+  var kCol = header.indexOf('key'), vCol = header.indexOf('value'),
+      atCol = header.indexOf('updatedAt'), byCol = header.indexOf('updatedBy');
+  var now = new Date().toISOString();
+  Object.keys(patch || {}).forEach(function (k) {
+    if (SETTINGS_KEYS.indexOf(k) < 0) return;
+    var found = false;
+    for (var r = 1; r < values.length; r++) {
+      if (String(values[r][kCol]) === k) {
+        sh.getRange(r + 1, vCol + 1).setValue(patch[k]);
+        sh.getRange(r + 1, atCol + 1).setValue(now);
+        sh.getRange(r + 1, byCol + 1).setValue(updatedBy || '');
+        found = true; break;
+      }
+    }
+    if (!found) { sh.appendRow([k, patch[k], now, updatedBy || '']); values.push([k, patch[k], now, updatedBy || '']); }
+  });
+  return { ok: true };
+}
+
+// Email the client-built incentive report PDF to the auditor + the incentive
+// Pabbly mail hook (Drive drop-off). body = { from, to, base64, fileName, sentBy }.
+function sendAuditorReport_(body) {
+  if (!body.base64) return { error: 'No report attached.' };
+  var s = readSettings_();
+  var to = [s.auditorEmail, s.incentiveHook].map(function (e) { return (e || '').trim(); }).filter(Boolean);
+  if (!to.length) return { error: 'Set the auditor email in Admin → Settings first.' };
+
+  var bytes = Utilities.base64Decode(body.base64);
+  var fileName = body.fileName || 'CabGlass-Incentives.pdf';
+  var subject = 'CabGlass incentive report — ' + ymd_(body.from) + ' to ' + ymd_(body.to);
+  var text = 'Attached is the incentive & commission report for ' + ymd_(body.from) + ' to ' + ymd_(body.to) + '.\n\n'
+    + 'Sent by ' + (body.sentBy || 'admin') + '.';
+
+  var key = PropertiesService.getScriptProperties().getProperty('RESEND_API_KEY');
+  if (key) {
+    UrlFetchApp.fetch('https://api.resend.com/emails', {
+      method: 'post', contentType: 'application/json',
+      headers: { 'Authorization': 'Bearer ' + key },
+      payload: JSON.stringify({
+        from: FROM_NAME + ' <' + FROM_EMAIL + '>',
+        to: to, subject: subject, text: text,
+        attachments: [{ filename: fileName, content: body.base64 }],
+      }),
+      muteHttpExceptions: true,
+    });
+  } else {
+    var blob = Utilities.newBlob(bytes, 'application/pdf', fileName);
+    MailApp.sendEmail({ to: to.join(','), subject: subject, body: text, attachments: [blob] });
+  }
+  return { ok: true, sentTo: to.join(', '), note: s.incentiveHook ? 'auditor + Drive hook' : 'auditor' };
+}
+
 // ── Dates & email ───────────────────────────────────────────────────────────
 
 function tz_() {
@@ -342,7 +427,7 @@ function userEmailById_(id) {
   return '';
 }
 
-var FROM_EMAIL = 'admin@cabglass.co.za';
+var FROM_EMAIL = 'info@cabglass.co.za';
 var FROM_NAME  = 'CabGlass Leave Tracker';
 
 // Fire-and-forget: never let a mail failure break the request.
@@ -411,6 +496,7 @@ function headerFor_(name) {
   if (name === MEETINGS_SHEET) return MEETING_COLS;
   if (name === INCENTIVES_SHEET) return INCENTIVES_COLS;
   if (name === COMMISSION_SHEET) return COMMISSION_COLS;
+  if (name === SETTINGS_SHEET) return SETTINGS_COLS;
   return AGENDA_COLS;
 }
 
@@ -718,6 +804,17 @@ function sendDailyProgress_(period, progress, sentBy) {
 
 function fmt_(n) { return Math.round(n).toLocaleString(); }
 
+// Run this ONCE from the editor to grant UrlFetchApp permission, then delete it.
+function authorizeResend() {
+  UrlFetchApp.fetch('https://api.resend.com/emails', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'Authorization': 'Bearer test' },
+    payload: JSON.stringify({ from: 'test', to: ['test'], subject: 'test', text: 'test' }),
+    muteHttpExceptions: true,
+  });
+}
+
 function sanitize_(u) {
   return {
     id: Number(u.id), name: u.name, username: u.username, role: u.role,
@@ -785,6 +882,7 @@ function setup() {
   sheet_(AGENDA_SHEET);
   sheet_(INCENTIVES_SHEET);
   sheet_(COMMISSION_SHEET);
+  sheet_(SETTINGS_SHEET);
   // Migrate older sheets: add any columns introduced in later versions.
   ensureColumns_(USERS_SHEET);
   ensureColumns_(REQUESTS_SHEET);
@@ -794,6 +892,7 @@ function setup() {
   ensureColumns_(AGENDA_SHEET);
   ensureColumns_(INCENTIVES_SHEET);
   ensureColumns_(COMMISSION_SHEET);
+  ensureColumns_(SETTINGS_SHEET);
   if (readUsers_().length === 0) {
     var seed = [
       { id: 1, name: 'Claire',     username: 'admin',     password: 'admin123',     role: 'admin',    approverId: '', startDate: '2020-01-01' },

@@ -1,7 +1,8 @@
-import { useState } from 'react'
-import { UserPlus, Trash2, Shield, User, Download, SlidersHorizontal, Send, Pencil } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { UserPlus, Trash2, Shield, User, Download, SlidersHorizontal, Send, Pencil, Settings, Save } from 'lucide-react'
 import { useAuth, ROLES } from '../context/AuthContext'
 import { useLeave } from '../context/LeaveContext'
+import { useIncentives } from '../context/IncentivesContext'
 import { balancesFor } from '../leaveCalc'
 import { downloadMonthlyPdf, monthlyPdfBase64 } from '../monthlyReport'
 import { LIVE, apiFinalizeMonth } from '../api'
@@ -11,6 +12,10 @@ const num = (v) => Number(v) || 0
 export default function AdminPage() {
   const { user, users, addUser, updateUser, deleteUser } = useAuth()
   const { requests } = useLeave()
+  const { settings, saveSettings } = useIncentives()
+  const [sform, setSform] = useState(settings)
+  const [savingSettings, setSavingSettings] = useState(false)
+  useEffect(() => { setSform(settings) }, [settings])
   const [form, setForm] = useState({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '', canEditMeetings: false })
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
@@ -123,6 +128,20 @@ export default function AdminPage() {
     finally { setFinalizing(false) }
   }
 
+  const sset = (k, v) => setSform(f => ({ ...f, [k]: v }))
+  const saveSettingsNow = async () => {
+    setError(''); setMsg('')
+    setSavingSettings(true)
+    const res = await saveSettings({
+      auditorEmail: (sform.auditorEmail || '').trim(),
+      incentiveHook: (sform.incentiveHook || '').trim(),
+      leaveHook: (sform.leaveHook || '').trim(),
+    }, user.name)
+    setSavingSettings(false)
+    if (res?.error) flash(setError, res.error)
+    else flash(setMsg, 'Settings saved.')
+  }
+
   return (
     <div className="space-y-6">
       {(error || msg) && (
@@ -181,6 +200,33 @@ export default function AdminPage() {
             {finalizing ? 'Finalizing…' : 'Finalize & email'}
           </button>
         </div>
+      </div>
+
+      {/* Settings: auditor email + Pabbly mail hooks */}
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm p-6 space-y-4">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100"><Settings size={18} className="text-brand-dark" /> Settings</h2>
+          <p className="text-xs text-slate-400 mt-1">Where the incentive auditor report and Pabbly drop-off emails go. The <span className="font-semibold">mail hooks</span> are Pabbly inbound addresses that forward the emailed report into a Google Drive folder — keep the incentive and leave hooks separate.</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Auditor email</label>
+            <input type="email" value={sform.auditorEmail || ''} onChange={e => sset('auditorEmail', e.target.value)} placeholder="auditor@firm.co.za" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Incentive mail hook (Pabbly)</label>
+            <input type="email" value={sform.incentiveHook || ''} onChange={e => sset('incentiveHook', e.target.value)} placeholder="incentives@…pabbly…" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Leave mail hook (Pabbly)</label>
+            <input type="email" value={sform.leaveHook || ''} onChange={e => sset('leaveHook', e.target.value)} placeholder="leave@…pabbly…" className={inputCls} />
+          </div>
+        </div>
+        <button onClick={saveSettingsNow} disabled={savingSettings} style={{ backgroundColor: '#FECD28' }}
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[#111111] disabled:opacity-50 hover:brightness-95 transition-all">
+          {savingSettings ? <span className="w-4 h-4 border-2 border-[#111111]/30 border-t-[#111111] rounded-full animate-spin" /> : <Save size={15} />}
+          {savingSettings ? 'Saving…' : 'Save settings'}
+        </button>
       </div>
 
       {/* Add user */}

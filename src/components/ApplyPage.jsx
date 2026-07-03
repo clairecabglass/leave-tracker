@@ -24,7 +24,7 @@ function BalanceCard({ label, value, sub, tone = 'brand' }) {
 
 export default function ApplyPage() {
   const { user, users, userName, isAdmin, reportsOf } = useAuth()
-  const { requests, submitRequest, enterLeave, cancelRequest } = useLeave()
+  const { requests, submitRequest, enterLeave, overlappingRequest, cancelRequest } = useLeave()
   const [targetId, setTargetId] = useState(user.id)
   const [type, setType] = useState(LEAVE_TYPES[0])
   const [otherLabel, setOtherLabel] = useState('')
@@ -33,6 +33,7 @@ export default function ApplyPage() {
   const [reason, setReason] = useState('')
   const [halfDay, setHalfDay] = useState(false)
   const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
 
   // Who this person can log leave for: always themselves; admins → everyone;
   // approvers → the people they approve. Self first, then the rest by name.
@@ -62,8 +63,15 @@ export default function ApplyPage() {
 
   const submit = (e) => {
     e.preventDefault()
+    setErr('')
     if (days <= 0) { setMsg('Please pick valid working dates.'); return }
     if (type === 'Other' && !otherLabel.trim()) { setMsg('Please specify the type of leave.'); return }
+    const clash = overlappingRequest(target.id, startDate, endDate)
+    if (clash) {
+      const who = onBehalf ? `${target.name} already has` : 'You already have'
+      setErr(`${who} ${clash.status.toLowerCase()} leave over that period (${fmt(clash.startDate)} → ${fmt(clash.endDate)}). Overlapping dates aren't allowed.`)
+      return
+    }
     if (blockSubmit) { setMsg(''); return } // blocked — button is disabled, guard anyway
     if (onBehalf) {
       enterLeave({ employee: target, type, otherLabel, startDate, endDate, reason, halfDay: halfDay && singleDay, enteredBy: user.name })
@@ -168,6 +176,7 @@ export default function ApplyPage() {
                   )}
                 </div>
               )}
+              {err && <p className="text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2">{err}</p>}
               {msg && <p className="text-sm text-emerald-600 dark:text-emerald-400">{msg}</p>}
               <button type="submit" disabled={blockSubmit} style={{ backgroundColor: '#FECD28' }}
                 className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-[#111111] disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-95 transition-all">

@@ -1,10 +1,26 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Gift, TrendingUp, Send, Upload, ChevronLeft, ChevronRight,
-  Check, AlertCircle, X, Info, Save, Mail, Users, Settings,
+  Check, AlertCircle, X, Info, Save, Mail, Users, Settings, FileText, Printer,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useIncentives, defaultPeriodData } from '../context/IncentivesContext'
+import { workingDays } from '../workdays'
+import {
+  netTurnover, bdbOwnComm, bvOwnComm, helperBonus, branchBonus,
+  whPerPersonRate, amyBonus, repMetrics,
+} from '../incentiveCalc'
+import IncentiveReportTab from './IncentiveReportTab'
+
+// Pull a DD-MM-YYYY date out of a filename → returns 'YYYY-MM-DD' or null.
+function dateFromFilename(name) {
+  const m = String(name || '').match(/(\d{2})-(\d{2})-(\d{4})/)
+  if (!m) return null
+  const [, dd, mm, yyyy] = m
+  const d = Number(dd), mo = Number(mm)
+  if (d < 1 || d > 31 || mo < 1 || mo > 12) return null
+  return `${yyyy}-${mm}-${dd}`
+}
 
 // ── Period helpers ────────────────────────────────────────────────────────────
 
@@ -38,87 +54,6 @@ function fmtRInt(n) { return fmtR(n, 0) }
 function parseNum(s) {
   const c = String(s??'').replace(/[R\s]/g,'').replace(/,(?=\d{3})/g,'').replace(/[^0-9.]/g,'')
   const v = parseFloat(c); return isNaN(v) ? 0 : v
-}
-
-// ── Commission calculation engine ─────────────────────────────────────────────
-
-// Net turnover per salesperson: proportional share of branch-wide deductions.
-function netTurnover(gross, bvGross, bdbGross, transitCover, discounts) {
-  const combined = bvGross + bdbGross
-  const totalDed = transitCover + discounts
-  const share = combined > 0 ? gross / combined : 0
-  return gross - totalDed * share
-}
-
-// BDB own commission: 3% above R500k of NET, only if GROSS > R500k.
-function bdbOwnComm(bdbGross, bdbNet) {
-  if (bdbGross <= 500000) return 0
-  return Math.max(0, (bdbNet - 500000) * 0.03)
-}
-// BV own commission: 3% above R500k of NET − R7,500, only if GROSS > R500k.
-function bvOwnComm(bvGross, bvNet) {
-  if (bvGross <= 500000) return 0
-  return Math.max(0, (bvNet - 500000) * 0.03 - 7500)
-}
-// Helper bonus: BV only, R8,500 when BOTH are above R500k gross.
-function helperBonus(bvGross, bdbGross) {
-  return bvGross > 500000 && bdbGross > 500000 ? 8500 : 0
-}
-// Branch target bonus: R2,500 each when combined gross > branch target AND branch target > R1m.
-function branchBonus(bvGross, bdbGross, branchTarget) {
-  return bvGross + bdbGross > branchTarget && branchTarget > 1000000 ? 2500 : 0
-}
-
-// Warehouse per-person rate lookup from the official tier table.
-// Uses net branch turnover (BV+BDB gross − total deductions).
-function whPerPersonRate(net) {
-  if (net > 1350000) return 5000 + Math.floor((net - 1350000) / 50000) * 250
-  if (net > 1300000) return 4750
-  if (net > 1250000) return 4500
-  if (net > 1200000) return 4250
-  if (net > 1150000) return 4000
-  if (net > 1100000) return 3750
-  if (net > 1050000) return 3500
-  if (net > 1000000) return 3250
-  if (net > 950000)  return 2750
-  if (net > 900000)  return 2500
-  if (net > 850000)  return 2200
-  if (net > 800000)  return 1900
-  if (net > 750000)  return 1600
-  if (net > 700000)  return 1350
-  if (net > 650000)  return 1100
-  if (net > 600000)  return 850
-  if (net > 550000)  return 600
-  return 0
-}
-
-// Amy GP tiered bonus.
-function amyBonus(gp) {
-  if (gp > 1000000) return 16000 + Math.floor((gp - 1000000) / 50000) * 1000
-  if (gp > 950000)  return 15000
-  if (gp > 900000)  return 14000
-  if (gp > 850000)  return 13000
-  if (gp > 800000)  return 12000
-  if (gp > 750000)  return 11000
-  if (gp > 700000)  return 10000
-  if (gp > 650000)  return 9000
-  if (gp > 600000)  return 8000
-  if (gp > 550000)  return 5500
-  if (gp > 500000)  return 4500
-  if (gp > 450000)  return 3500
-  if (gp > 400000)  return 2500
-  return 0
-}
-
-// Daily tracker metrics per rep.
-function repMetrics(cumulative, monthlyTarget, daysElapsed, workingDays) {
-  const dailyTarget  = workingDays > 0 ? monthlyTarget / workingDays : 0
-  const expected     = dailyTarget * daysElapsed
-  const delta        = cumulative - expected
-  const projected    = daysElapsed > 0 ? (cumulative / daysElapsed) * workingDays : 0
-  const daysLeft     = workingDays - daysElapsed
-  const newDailyRate = daysLeft > 0 ? Math.max(0, (monthlyTarget - cumulative) / daysLeft) : 0
-  return { dailyTarget, expected, delta, projected, newDailyRate }
 }
 
 // ── Shared UI primitives ──────────────────────────────────────────────────────
@@ -568,15 +503,47 @@ function CommissionTab({ period, setPeriod }) {
 
 function DailyTrackerTab({ period, setPeriod }) {
   const { users, user: me } = useAuth()
-  const { getPeriodData, sendDailyProgress } = useIncentives()
+  const { getPeriodData, updatePeriodData, saveCommissionPeriod, sendDailyProgress } = useIncentives()
   const d = getPeriodData(period)
 
   const [daysElapsed, setDaysElapsed]  = useState(String(new Date().getDate()))
   const [uploadedReps, setUploadedReps] = useState(null)  // [{ rawName, cumulative }]
+  const [importedFileDate, setImportedFileDate] = useState(null)
   const [uploadError, setUploadError]   = useState('')
   const [sending, setSending]           = useState(false)
+  const [saving, setSaving]             = useState(false)
   const [toast, setToast]               = useState(null)
   const fileRef = useRef()
+
+  // When a dated file is imported, derive working days elapsed (1st → file date).
+  useEffect(() => {
+    if (!importedFileDate) return
+    const [y, m] = importedFileDate.split('-').map(Number)
+    const first = `${y}-${String(m).padStart(2, '0')}-01`
+    const elapsed = workingDays(first, importedFileDate)
+    if (elapsed > 0) setDaysElapsed(String(elapsed))
+  }, [importedFileDate])
+
+  // Feed the imported cumulative BV/BDB turnover into the month's commission figures
+  // (overwrites on every fresh import). Amy is excluded so she never lands here.
+  useEffect(() => {
+    if (!uploadedReps) return
+    const bv  = uploadedReps.find(r => r.role === 'bv')
+    const bdb = uploadedReps.find(r => r.role === 'bdb')
+    const patch = {}
+    if (bv)  patch.bvGross  = bv.cumulative
+    if (bdb) patch.bdbGross = bdb.cumulative
+    if (Object.keys(patch).length) updatePeriodData(period, patch)
+  }, [uploadedReps]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSaveMonth = async () => {
+    setSaving(true)
+    const res = await saveCommissionPeriod(period, me.name)
+    setSaving(false)
+    setToast(res?.ok
+      ? { ok: true, msg: `Saved ${formatPeriod(period)} — figures written to the month.` }
+      : { ok: false, msg: res?.error || 'Save failed.' })
+  }
 
   const bvUser  = users.find(u => u.commissionRole === 'bv')
   const bdbUser = users.find(u => u.commissionRole === 'bdb')
@@ -632,7 +599,16 @@ function DailyTrackerTab({ period, setPeriod }) {
         }
       })
       if (!parsed.length) { setUploadError('Could not find recognisable rep rows. Check the file matches the expected pivot format.'); return }
-      setUploadedReps(parsed)
+      // Amy is excluded entirely — subtract her figure from the Grand Total so the
+      // total behaves as if she isn't in the file, then drop her row.
+      const amyRow = parsed.find(r => r.role === 'amy')
+      const totRow = parsed.find(r => r.role === 'total')
+      if (totRow && amyRow) totRow.cumulative = Math.max(0, totRow.cumulative - amyRow.cumulative)
+      const cleaned = parsed.filter(r => r.role !== 'amy')
+      // Pull the date out of the filename (DD-MM-YYYY) if present.
+      const fileDate = dateFromFilename(file.name)
+      setUploadedReps(cleaned)
+      setImportedFileDate(fileDate)
     } catch (err) {
       console.error(err)
       setUploadError('Could not read file: ' + String(err.message || err))
@@ -691,11 +667,16 @@ function DailyTrackerTab({ period, setPeriod }) {
           onChange={e => setDaysElapsed(e.target.value)}
           className="w-20 px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-[#FECD28]/60"/>
         <span className="text-xs text-slate-400">of {wDays} working days</span>
+        {importedFileDate && (
+          <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+            <Check size={12}/> file dated {new Date(importedFileDate).toLocaleDateString('en-ZA', { day:'2-digit', month:'short', year:'numeric' })}
+          </span>
+        )}
       </div>
 
       {/* File upload */}
       <Card title="Upload SMART IT pivot export" icon={Upload}>
-        <p className="text-xs text-slate-400 mb-3">Drop the daily .xlsx pivot file (BrendonV / BrendonD / AmyB / Grand Total rows). Figures are treated as cumulative month-to-date.</p>
+        <p className="text-xs text-slate-400 mb-3">Drop the daily .xlsx pivot file (BrendonV / BrendonD / Grand Total rows). Figures are cumulative month-to-date. <span className="font-medium text-slate-500 dark:text-slate-300">Amy is excluded</span> — her turnover is removed from the Grand Total. The date is read from the filename (DD-MM-YYYY).</p>
         <div onDrop={onDrop} onDragOver={onDragOver} onClick={() => fileRef.current?.click()}
           className="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl px-6 py-6 text-center cursor-pointer hover:border-[#FECD28] hover:bg-[#FECD28]/5 transition-colors">
           <Upload size={22} className="mx-auto mb-2 text-slate-400"/>
@@ -724,7 +705,7 @@ function DailyTrackerTab({ period, setPeriod }) {
                 {[
                   bvRow  && { label: bvUser?.name  || 'BV',  cum: bvRow.cumulative,  target: bvTarget  },
                   bdbRow && { label: bdbUser?.name || 'BDB', cum: bdbRow.cumulative, target: bdbTarget },
-                  totalRow && { label: 'Grand Total', cum: totalRow.cumulative, target: (d.dailyTarget||0)*(d.workingDays||20) },
+                  totalRow && { label: 'Grand Total (excl. Amy)', cum: totalRow.cumulative, target: (d.dailyTarget||0)*(d.workingDays||20) },
                 ].filter(Boolean).map(({ label, cum, target }) => {
                   const m = repMetrics(cum, target, days, wDays)
                   const ahead = m.delta >= 0
@@ -745,14 +726,18 @@ function DailyTrackerTab({ period, setPeriod }) {
             </table>
           </div>
 
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <button onClick={handleSaveMonth} disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-black bg-[#FECD28] hover:bg-[#f0c020] disabled:opacity-40 transition-colors">
+              <Save size={14}/> {saving ? 'Saving…' : 'Save to month'}
+            </button>
             <button onClick={handleSendDailyEmail} disabled={sending}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-slate-800 dark:bg-slate-700 hover:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-40 transition-colors">
               <Mail size={14}/> {sending ? 'Sending…' : 'Send daily progress email'}
             </button>
           </div>
           <p className="mt-2 text-xs text-slate-400 flex items-center gap-1.5">
-            <Info size={11}/> Daily email goes to all salesmen + admins with email addresses on file.
+            <Info size={11}/> "Save to month" writes BV/BDB turnover into {formatPeriod(period)}'s Commission figures (re-import to overwrite). Daily email goes to all salesmen + admins with email addresses on file.
           </p>
         </Card>
       )}
@@ -784,12 +769,15 @@ export default function IncentivesPage() {
           <button className={tabCls('daily')} onClick={() => setTab('daily')}>
             <Upload size={15}/> Daily Tracker
           </button>
+          <button className={tabCls('reports')} onClick={() => setTab('reports')}>
+            <FileText size={15}/> Reports
+          </button>
         </div>
       </div>
 
-      {tab === 'commission'
-        ? <CommissionTab period={period} setPeriod={setPeriod} />
-        : <DailyTrackerTab period={period} setPeriod={setPeriod} />
+      {tab === 'commission' ? <CommissionTab period={period} setPeriod={setPeriod} />
+        : tab === 'daily'   ? <DailyTrackerTab period={period} setPeriod={setPeriod} />
+        : <IncentiveReportTab />
       }
     </div>
   )

@@ -100,12 +100,11 @@ export default function CalendarPage() {
                     {overlap && <AlertTriangle size={12} className="text-amber-500" title={`${people.length} people on leave`} />}
                   </div>
                   <div className="mt-1 space-y-0.5">
-                    {people.slice(0, 3).map((p, j) => (
+                    {people.map((p, j) => (
                       <div key={j} className={`truncate rounded px-1.5 py-0.5 text-[11px] font-medium ${colourFor(p.id)}`} title={`${p.name} — ${p.type}`}>
                         {p.name}
                       </div>
                     ))}
-                    {people.length > 3 && <div className="text-[11px] text-slate-400 px-1">+{people.length - 3} more</div>}
                   </div>
                 </>
               )}

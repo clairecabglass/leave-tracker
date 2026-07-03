@@ -65,6 +65,20 @@ export function LeaveProvider({ children }) {
     return req
   }
 
+  // Find an existing Pending/Approved request for this person whose dates overlap
+  // [startDate, endDate]. Returns the clashing request or null. Date strings are
+  // YYYY-MM-DD so lexical comparison is safe.
+  const overlappingRequest = (employeeId, startDate, endDate, excludeId = null) => {
+    const s = String(startDate).slice(0, 10), e = String(endDate).slice(0, 10)
+    return requests.find(r =>
+      r.employeeId === employeeId &&
+      r.id !== excludeId &&
+      (r.status === STATUS.PENDING || r.status === STATUS.APPROVED) &&
+      String(r.startDate).slice(0, 10) <= e &&
+      s <= String(r.endDate).slice(0, 10)
+    ) || null
+  }
+
   // Admin/approver logs leave directly ON BEHALF of someone — lands Approved.
   // `enteredBy` = the name of the person recording it (used in the notification).
   const enterLeave = ({ employee, type, otherLabel, startDate, endDate, reason, halfDay, enteredBy }) => {
@@ -139,7 +153,7 @@ export function LeaveProvider({ children }) {
   return (
     <LeaveContext.Provider value={{
       requests, sickNotes,
-      submitRequest, enterLeave, decideRequest, undoRequest, cancelRequest,
+      submitRequest, enterLeave, overlappingRequest, decideRequest, undoRequest, cancelRequest,
       uploadSickNote, deleteSickNote, refresh,
     }}>
       {children}
