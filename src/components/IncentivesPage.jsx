@@ -254,6 +254,23 @@ function CommissionTab({ period, setPeriod }) {
   const amyTopUp    = parseNum(num('amyTopUp'))
   const amyFinal    = amyCalc + amyTopUp
 
+  // The exact values currently in the form (drafts included), for saving without
+  // waiting on React state to flush — this is what gets persisted.
+  const currentPayload = () => ({
+    ...d,
+    dailyTarget: parseNum(num('dailyTarget')),
+    bdbMonthlyTarget: parseNum(num('bdbMonthlyTarget')),
+    workingDays: effWorkingDays,
+    workingDaysOverride: hasOverride ? parseNum(overrideRaw) : null,
+    transitCover: parseNum(num('transitCover')),
+    discounts: parseNum(num('discounts')),
+    bvGross: bvG,
+    bdbGross: bdbG,
+    whHeadcount: wh,
+    amyGP,
+    amyTopUp,
+  })
+
   // Categorised users
   const bvUser  = users.find(u => u.commissionRole === 'bv')
   const bdbUser = users.find(u => u.commissionRole === 'bdb')
@@ -262,17 +279,15 @@ function CommissionTab({ period, setPeriod }) {
 
   const handleSave = async () => {
     setSaving(true)
-    const res = await saveCommissionPeriod(period, me.name)
+    const res = await saveCommissionPeriod(period, me.name, currentPayload())
     setSaving(false)
     setToast(res?.ok ? { ok: true, msg: `Saved ${formatPeriod(period)}.` } : { ok: false, msg: res?.error || 'Save failed.' })
   }
 
   // Save just the monthly targets so they stay static across daily imports.
   const handleSaveTargets = async () => {
-    ['dailyTarget', 'bdbMonthlyTarget'].forEach(k => { if (drafts[k] !== undefined) commitDraft(k) })
-    upd({ workingDays: effWorkingDays, workingDaysOverride: hasOverride ? parseNum(overrideRaw) : null })
     setSavingTargets(true)
-    const res = await saveCommissionPeriod(period, me.name)
+    const res = await saveCommissionPeriod(period, me.name, currentPayload())
     setSavingTargets(false)
     setToast(res?.ok ? { ok: true, msg: `Targets saved for ${formatPeriod(period)}.` } : { ok: false, msg: res?.error || 'Save failed.' })
   }

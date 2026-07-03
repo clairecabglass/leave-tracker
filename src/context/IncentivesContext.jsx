@@ -109,8 +109,11 @@ export function IncentivesProvider({ children }) {
     }))
   }
 
-  const saveCommissionPeriod = async (period, updatedBy) => {
-    const payload = commissionPeriods[period] ?? defaultPeriodData()
+  // `explicitPayload` lets the caller pass the exact values to save, avoiding the
+  // stale-state race where an edit hasn't flushed into commissionPeriods yet.
+  const saveCommissionPeriod = async (period, updatedBy, explicitPayload) => {
+    const payload = explicitPayload ?? commissionPeriods[period] ?? defaultPeriodData()
+    if (explicitPayload) updatePeriodData(period, explicitPayload) // keep local state in sync
     if (LIVE) {
       const res = await apiSaveCommissionPeriod(period, payload, updatedBy)
       if (res?.ok) refresh()
