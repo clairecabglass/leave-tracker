@@ -26,6 +26,21 @@ function loadObj(key) {
   return {}
 }
 
+// Normalise a commission period key to 'YYYY-MM'. Google Sheets can coerce the
+// stored "2026-07" into a Date, which reads back as "Wed Jul 01 2026 …". This
+// recovers the canonical month key so lookups/saves work regardless of backend.
+function toYM(k) {
+  const m = String(k).match(/^(\d{4})-(\d{2})/)
+  if (m) return `${m[1]}-${m[2]}`
+  const d = new Date(k)
+  return isNaN(d) ? String(k) : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+function normalizeCommission(obj) {
+  const out = {}
+  for (const [k, v] of Object.entries(obj || {})) out[toYM(k)] = v
+  return out
+}
+
 // Default period state — admin fills these in.
 export function defaultPeriodData() {
   return {
@@ -53,7 +68,7 @@ export function IncentivesProvider({ children }) {
     try {
       const data = await fetchData()
       if (data?.incentives)  setIncentives(data.incentives)
-      if (data?.commission)  setCommissionPeriods(data.commission)
+      if (data?.commission)  setCommissionPeriods(normalizeCommission(data.commission))
       if (data?.settings)    setSettings(s => ({ ...defaultSettings(), ...data.settings }))
     } catch (err) { console.error('Load incentives failed:', err) }
   }
