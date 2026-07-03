@@ -29,7 +29,7 @@ function loadObj(key) {
 // Default period state — admin fills these in.
 export function defaultPeriodData() {
   return {
-    dailyTarget: 0, workingDays: 20, bdbMonthlyTarget: 0,
+    dailyTarget: 0, workingDays: 20, workingDaysOverride: null, bdbMonthlyTarget: 0,
     transitCover: 0, discounts: 0,
     bvGross: 0, bdbGross: 0,
     whHeadcount: 3,

@@ -168,15 +168,20 @@ function CommissionTab({ period, setPeriod }) {
   const absVal = (uid) => d.absences?.[uid] ?? 0
   const setAbs = (uid, v) => upd({ absences: { ...(d.absences||{}), [uid]: parseNum(v) } })
 
-  // Working days are auto-calculated for the month (Mon–Fri minus SA public
-  // holidays) — kept in sync into the saved period so downstream reads match.
+  // Working days auto-calculate for the month (Mon–Fri minus SA public holidays),
+  // but the admin can override manually if the auto count is wrong. A positive
+  // override wins; otherwise use the auto count. Kept in sync into the saved
+  // period (workingDays) so the daily tracker + report read the same number.
   const autoWorkingDays = monthWorkingDays(period)
+  const overrideRaw = drafts.workingDaysOverride !== undefined ? drafts.workingDaysOverride : d.workingDaysOverride
+  const hasOverride = overrideRaw != null && String(overrideRaw).trim() !== '' && parseNum(overrideRaw) > 0
+  const effWorkingDays = hasOverride ? parseNum(overrideRaw) : autoWorkingDays
   useEffect(() => {
-    if (autoWorkingDays && d.workingDays !== autoWorkingDays) updatePeriodData(period, { workingDays: autoWorkingDays })
-  }, [period, autoWorkingDays]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (effWorkingDays && d.workingDays !== effWorkingDays) updatePeriodData(period, { workingDays: effWorkingDays })
+  }, [period, effWorkingDays]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Derived targets
-  const branchTarget = parseNum(num('dailyTarget')) * autoWorkingDays
+  const branchTarget = parseNum(num('dailyTarget')) * effWorkingDays
   const bvTarget     = branchTarget - parseNum(num('bdbMonthlyTarget'))
 
   // Net turnover (per person)
@@ -200,7 +205,7 @@ function CommissionTab({ period, setPeriod }) {
   const whRate  = whPerPersonRate(netBranch)
   const wh      = parseNum(num('whHeadcount'))
   const whTotal = whRate * wh
-  const wDays   = autoWorkingDays
+  const wDays   = effWorkingDays
   const whDailyRate = wDays > 0 ? whRate / wDays : 0
 
   // Amy
@@ -225,7 +230,7 @@ function CommissionTab({ period, setPeriod }) {
   // Save just the monthly targets so they stay static across daily imports.
   const handleSaveTargets = async () => {
     ['dailyTarget', 'bdbMonthlyTarget'].forEach(k => { if (drafts[k] !== undefined) commitDraft(k) })
-    upd({ workingDays: autoWorkingDays })
+    upd({ workingDays: effWorkingDays, workingDaysOverride: hasOverride ? parseNum(overrideRaw) : null })
     setSavingTargets(true)
     const res = await saveCommissionPeriod(period, me.name)
     setSavingTargets(false)
@@ -357,10 +362,18 @@ function CommissionTab({ period, setPeriod }) {
             </div>
           ))}
           <div>
-            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Working days (auto)</label>
-            <div className="w-full px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700/50 text-sm text-slate-900 dark:text-slate-100">
-              {autoWorkingDays}
-            </div>
+            <label className="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">
+              <span>Working days {hasOverride ? '(manual)' : '(auto)'}</span>
+              {hasOverride && (
+                <button type="button" onClick={() => { setDraft('workingDaysOverride', ''); upd({ workingDaysOverride: null }) }}
+                  className="text-[11px] font-medium text-[#b8960a] dark:text-[#FECD28] hover:underline">↺ auto ({autoWorkingDays})</button>
+              )}
+            </label>
+            <NumInput prefix=""
+              value={drafts.workingDaysOverride !== undefined ? drafts.workingDaysOverride : (d.workingDaysOverride ?? autoWorkingDays)}
+              onChange={v => setDraft('workingDaysOverride', v)}
+              onBlur={() => { const raw = drafts.workingDaysOverride; if (raw !== undefined) { const v = String(raw).trim() === '' ? null : parseNum(raw); upd({ workingDaysOverride: v }); setDrafts(p => { const n = { ...p }; delete n.workingDaysOverride; return n }) } }}
+            />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-700/30 rounded-lg p-3 mb-3">
@@ -369,7 +382,7 @@ function CommissionTab({ period, setPeriod }) {
         </div>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <p className="text-xs text-slate-400 flex items-center gap-1.5">
-            <Info size={11}/> Working days count Mon–Fri minus SA public holidays. Save targets once — they stay fixed while you drop in the daily file.
+            <Info size={11}/> Working days auto-count Mon–Fri minus SA public holidays — edit the field to override. Save targets once; they stay fixed while you drop in the daily file.
           </p>
           <button onClick={handleSaveTargets} disabled={savingTargets}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-black bg-[#FECD28] hover:bg-[#f0c020] disabled:opacity-40 transition-colors">
