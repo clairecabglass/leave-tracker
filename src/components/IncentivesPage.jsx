@@ -12,6 +12,43 @@ import {
 } from '../incentiveCalc'
 import IncentiveReportTab from './IncentiveReportTab'
 
+// Parse a SMART IT pivot export (xlsx/csv). Returns { reps, fileDate } or { error }.
+// Amy is excluded: her figure is subtracted from the Grand Total, then dropped.
+async function parsePivotFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase()
+  let rows = []
+  if (ext === 'xlsx' || ext === 'xls') {
+    const XLSX = await import('xlsx')
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+    rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' })
+  } else {
+    const text = await file.text()
+    rows = text.replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+      .split('\n').filter(l => l.trim()).map(l => l.split(',').map(c => c.trim().replace(/^"|"$/g, '')))
+  }
+  if (!rows.length) return { error: 'File appears empty.' }
+  const parsed = []
+  rows.filter(r => r.some(c => String(c).trim())).forEach(row => {
+    const nameCell = String(row[0] || '').trim()
+    if (!nameCell) return
+    let amount = null
+    for (let i = 1; i < row.length; i++) { const v = parseNum(String(row[i])); if (v > 0) { amount = v; break } }
+    if (amount === null) return
+    const norm = nameCell.toLowerCase().replace(/\s/g, '')
+    let role = null
+    if (/brendonv|bv/.test(norm)) role = 'bv'
+    else if (/brendond|bdb/.test(norm)) role = 'bdb'
+    else if (/amyb|amy/.test(norm)) role = 'amy'
+    else if (/grand|total/.test(norm)) role = 'total'
+    parsed.push({ rawName: nameCell, cumulative: amount, role })
+  })
+  if (!parsed.length) return { error: 'Could not find recognisable rep rows. Check the file matches the expected pivot format.' }
+  const amyRow = parsed.find(r => r.role === 'amy')
+  const totRow = parsed.find(r => r.role === 'total')
+  if (totRow && amyRow) totRow.cumulative = Math.max(0, totRow.cumulative - amyRow.cumulative)
+  return { reps: parsed.filter(r => r.role !== 'amy'), fileDate: dateFromFilename(file.name) }
+}
+
 // Working days (Mon–Fri minus SA public holidays) in a 'YYYY-MM' period.
 function monthWorkingDays(period) {
   const [y, m] = period.split('-').map(Number)
@@ -154,6 +191,9 @@ function CommissionTab({ period, setPeriod }) {
   const [sending, setSending] = useState(false)
   const [toast, setToast]     = useState(null)
   const [showSetup, setShowSetup] = useState(false)
+  const [imp, setImp] = useState(null)      // last import summary { bv, bdb, total, fileDate }
+  const [impErr, setImpErr] = useState('')
+  const commFileRef = useRef()
   const [rolesSaving, setRolesSaving] = useState(false)
   const [roleDrafts, setRoleDrafts]   = useState({})
 
@@ -235,6 +275,27 @@ function CommissionTab({ period, setPeriod }) {
     const res = await saveCommissionPeriod(period, me.name)
     setSavingTargets(false)
     setToast(res?.ok ? { ok: true, msg: `Targets saved for ${formatPeriod(period)}.` } : { ok: false, msg: res?.error || 'Save failed.' })
+  }
+
+  // Drop the daily pivot straight into Commission — turnover flows into the
+  // calculations below and shows a quick summary. (Amy is excluded.)
+  const handleCommUpload = async (file) => {
+    if (!file) return
+    setImpErr('')
+    try {
+      const res = await parsePivotFile(file)
+      if (res.error) { setImpErr(res.error); return }
+      const bv = res.reps.find(r => r.role === 'bv')
+      const bdb = res.reps.find(r => r.role === 'bdb')
+      const patch = {}
+      if (bv) patch.bvGross = bv.cumulative
+      if (bdb) patch.bdbGross = bdb.cumulative
+      // Drop stale drafts so the turnover inputs show the freshly imported values.
+      setDrafts(prev => { const n = { ...prev }; delete n.bvGross; delete n.bdbGross; return n })
+      if (Object.keys(patch).length) upd(patch)
+      setImp({ bv: bv?.cumulative ?? null, bdb: bdb?.cumulative ?? null,
+        total: res.reps.find(r => r.role === 'total')?.cumulative ?? null, fileDate: res.fileDate })
+    } catch (e) { setImpErr('Could not read the file.') }
   }
 
   const handleSendMonthEnd = async () => {
@@ -344,6 +405,29 @@ function CommissionTab({ period, setPeriod }) {
           </div>
         )}
       </div>
+
+      {/* Daily pivot upload — feeds turnover straight into the calcs below */}
+      <Card title="Drop in the daily pivot file" icon={Upload} accent>
+        <p className="text-xs text-slate-400 mb-3">Drop today's SMART IT export (BrendonV / BrendonD / Grand Total). BV & BDB turnover fill in below and the whole breakdown updates. <span className="font-medium text-slate-500 dark:text-slate-300">Amy is excluded.</span> Re-drop any time to overwrite; hit <span className="font-medium">Save</span> to store the month.</p>
+        <div onDrop={e => { e.preventDefault(); handleCommUpload(e.dataTransfer.files[0]) }} onDragOver={e => e.preventDefault()}
+          onClick={() => commFileRef.current?.click()}
+          className="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl px-6 py-5 text-center cursor-pointer hover:border-[#FECD28] hover:bg-[#FECD28]/5 transition-colors">
+          <Upload size={20} className="mx-auto mb-1.5 text-slate-400"/>
+          <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Drop .xlsx or .csv here, or click to browse</p>
+          <input ref={commFileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => handleCommUpload(e.target.files[0])}/>
+        </div>
+        {impErr && <p className="mt-2 text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12}/> {impErr}</p>}
+        {imp && (
+          <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 bg-emerald-50/60 dark:bg-emerald-900/15 rounded-lg p-3">
+            <div className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400 col-span-2 sm:col-span-1">
+              <Check size={13}/> Imported{imp.fileDate ? ` · ${new Date(imp.fileDate).toLocaleDateString('en-ZA', { day:'2-digit', month:'short' })}` : ''}
+            </div>
+            <Stat label={`${bvUser?.name || 'BV'} turnover`} value={fmtRInt(imp.bv)} />
+            <Stat label={`${bdbUser?.name || 'BDB'} turnover`} value={fmtRInt(imp.bdb)} />
+            <Stat label="Total (excl. Amy)" value={fmtRInt(imp.total)} />
+          </div>
+        )}
+      </Card>
 
       {/* Monthly targets — saved separately so they stay static all month */}
       <Card title="Monthly targets" icon={TrendingUp}>
@@ -600,67 +684,15 @@ function DailyTrackerTab({ period, setPeriod }) {
   const bvUser  = users.find(u => u.commissionRole === 'bv')
   const bdbUser = users.find(u => u.commissionRole === 'bdb')
 
-  // Parse turnover file (xlsx or csv).
+  // Parse turnover file via the shared parser, then show the progress table.
   const handleFile = useCallback(async (file) => {
     if (!file) return
     setUploadError(''); setUploadedReps(null)
-    const ext = file.name.split('.').pop().toLowerCase()
     try {
-      let rows = []
-      if (ext === 'xlsx' || ext === 'xls') {
-        const XLSX = await import('xlsx')
-        const buf  = await file.arrayBuffer()
-        const wb   = XLSX.read(buf, { type: 'array' })
-        const ws   = wb.Sheets[wb.SheetNames[0]]
-        rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
-      } else {
-        // CSV fallback
-        const text = await file.text()
-        rows = text.replace(/^﻿/,'').replace(/\r\n/g,'\n').replace(/\r/g,'\n')
-          .split('\n').filter(l=>l.trim()).map(l => l.split(',').map(c=>c.trim().replace(/^"|"$/g,'')))
-      }
-      // Find the column index that looks like a turnover/amount column
-      // The file has: rep name in col 0 (or similar), turnover value somewhere
-      // Fixed format: rows for BrendonD / BrendonV / AmyB / Grand Total
-      // We'll look for the rightmost numeric column as "turnover"
-      if (!rows.length) { setUploadError('File appears empty.'); return }
-
-      // Find header row (first row with text cells)
-      const dataRows = rows.filter(r => r.some(c => String(c).trim()))
-      // Try to identify name col (first col) and amount col (first numeric col after that)
-      const repNames = ['BrendonV','BrendonD','BrendonDB','AmyB','Amy','Grand Total','Total']
-      const parsed = []
-      dataRows.forEach(row => {
-        const nameCell = String(row[0] || '').trim()
-        if (!nameCell) return
-        // Find first numeric value in the row (skip index 0)
-        let amount = null
-        for (let i = 1; i < row.length; i++) {
-          const v = parseNum(String(row[i]))
-          if (v > 0) { amount = v; break }
-        }
-        if (amount !== null) {
-          // Match to known reps
-          const norm = nameCell.toLowerCase().replace(/\s/g,'')
-          let role = null
-          if (/brendonv|bv/.test(norm)) role = 'bv'
-          else if (/brendond|bdb/.test(norm)) role = 'bdb'
-          else if (/amyb|amy/.test(norm)) role = 'amy'
-          else if (/grand|total/.test(norm)) role = 'total'
-          parsed.push({ rawName: nameCell, cumulative: amount, role })
-        }
-      })
-      if (!parsed.length) { setUploadError('Could not find recognisable rep rows. Check the file matches the expected pivot format.'); return }
-      // Amy is excluded entirely — subtract her figure from the Grand Total so the
-      // total behaves as if she isn't in the file, then drop her row.
-      const amyRow = parsed.find(r => r.role === 'amy')
-      const totRow = parsed.find(r => r.role === 'total')
-      if (totRow && amyRow) totRow.cumulative = Math.max(0, totRow.cumulative - amyRow.cumulative)
-      const cleaned = parsed.filter(r => r.role !== 'amy')
-      // Pull the date out of the filename (DD-MM-YYYY) if present.
-      const fileDate = dateFromFilename(file.name)
-      setUploadedReps(cleaned)
-      setImportedFileDate(fileDate)
+      const res = await parsePivotFile(file)
+      if (res.error) { setUploadError(res.error); return }
+      setUploadedReps(res.reps)
+      setImportedFileDate(res.fileDate)
     } catch (err) {
       console.error(err)
       setUploadError('Could not read file: ' + String(err.message || err))
