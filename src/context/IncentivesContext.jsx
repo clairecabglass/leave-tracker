@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect } from 'react'
 import {
   LIVE, fetchData,
   apiSetIncentive, apiBulkSendIncentives, apiSendSalesReport,
-  apiSaveCommissionPeriod, apiSendMonthEndPayouts, apiSendDailyProgress,
+  apiSaveCommissionPeriod, apiClearCommissionPeriod, apiSendMonthEndPayouts, apiSendDailyProgress,
   apiSaveSettings, apiSendAuditorReport,
 } from '../api'
 
@@ -122,6 +122,13 @@ export function IncentivesProvider({ children }) {
     return { ok: true }
   }
 
+  // Wipe a month's saved commission data (local + server).
+  const clearCommissionPeriod = async (period) => {
+    setCommissionPeriods(prev => { const n = { ...prev }; delete n[period]; return n })
+    if (LIVE) { const res = await apiClearCommissionPeriod(period); if (res?.error) refresh(); return res }
+    return { ok: true }
+  }
+
   const sendMonthEndPayouts = async (period, payouts, sentBy) => {
     if (LIVE) return await apiSendMonthEndPayouts(period, payouts, sentBy)
     return { ok: true, sent: payouts.length, note: 'Mock mode — no emails sent.' }
@@ -135,7 +142,7 @@ export function IncentivesProvider({ children }) {
   return (
     <IncentivesContext.Provider value={{
       incentives, saveIncentive, bulkSendIncentives, sendSalesReport, refresh,
-      commissionPeriods, getPeriodData, updatePeriodData, saveCommissionPeriod,
+      commissionPeriods, getPeriodData, updatePeriodData, saveCommissionPeriod, clearCommissionPeriod,
       sendMonthEndPayouts, sendDailyProgress,
       settings, saveSettings, sendAuditorReport,
     }}>

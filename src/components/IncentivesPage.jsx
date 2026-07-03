@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Gift, TrendingUp, Send, Upload, ChevronLeft, ChevronRight,
-  Check, AlertCircle, X, Info, Save, Mail, Users, Settings, FileText, Printer,
+  Check, AlertCircle, X, Info, Save, Mail, Users, Settings, FileText, Printer, Trash2,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useIncentives, defaultPeriodData } from '../context/IncentivesContext'
@@ -179,7 +179,7 @@ const ROLE_OPTIONS = [
 
 function CommissionTab({ period, setPeriod }) {
   const { users, user: me, updateUser } = useAuth()
-  const { getPeriodData, updatePeriodData, saveCommissionPeriod, sendMonthEndPayouts } = useIncentives()
+  const { getPeriodData, updatePeriodData, saveCommissionPeriod, clearCommissionPeriod, sendMonthEndPayouts } = useIncentives()
 
   const d   = getPeriodData(period)
   const upd = (patch) => updatePeriodData(period, patch)
@@ -292,6 +292,13 @@ function CommissionTab({ period, setPeriod }) {
     setToast(res?.ok ? { ok: true, msg: `Targets saved for ${formatPeriod(period)}.` } : { ok: false, msg: res?.error || 'Save failed.' })
   }
 
+  const handleClearMonth = async () => {
+    if (!window.confirm(`Clear all saved data for ${formatPeriod(period)}? This can't be undone.`)) return
+    setDrafts({}); setImp(null); setImpErr('')
+    const res = await clearCommissionPeriod(period)
+    setToast(res?.ok ? { ok: true, msg: `Cleared ${formatPeriod(period)}.` } : { ok: false, msg: res?.error || 'Clear failed.' })
+  }
+
   // Drop the daily pivot straight into Commission — turnover flows into the
   // calculations below and shows a quick summary. (Amy is excluded.)
   const handleCommUpload = async (file) => {
@@ -370,6 +377,10 @@ function CommissionTab({ period, setPeriod }) {
         <PeriodNav period={period} onChange={setPeriod} />
         <div className="flex flex-wrap items-center gap-2">
           <Toast msg={toast?.msg} ok={toast?.ok} onClose={() => setToast(null)} />
+          <button onClick={handleClearMonth} title="Clear all saved data for this month"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+            <Trash2 size={14}/> Clear
+          </button>
           <button onClick={handleSave} disabled={saving}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-slate-800 dark:bg-slate-700 text-white hover:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-40 transition-colors">
             <Save size={14}/> {saving ? 'Saving…' : 'Save'}

@@ -40,6 +40,7 @@ export const apiSetIncentive           = (incentive) => apiPost('setIncentive', 
 export const apiBulkSendIncentives     = (period, sentBy) => apiPost('bulkSendIncentives', { period, sentBy })
 export const apiSendSalesReport        = (salesData, period, sentBy) => apiPost('sendSalesReport', { salesData, period, sentBy })
 export const apiSaveCommissionPeriod   = (period, payload, updatedBy) => apiPost('saveCommissionPeriod', { period, payload, updatedBy })
+export const apiClearCommissionPeriod  = (period) => apiPost('clearCommissionPeriod', { period })
 export const apiSendMonthEndPayouts    = (period, payouts, sentBy) => apiPost('sendMonthEndPayouts', { period, payouts, sentBy })
 export const apiSendDailyProgress      = (period, progress, sentBy) => apiPost('sendDailyProgress', { period, progress, sentBy })
 export const apiSaveSettings           = (patch, updatedBy) => apiPost('saveSettings', { patch, updatedBy })

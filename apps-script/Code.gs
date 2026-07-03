@@ -14,7 +14,7 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-07-leave-v14';
+var VERSION = '2026-07-leave-v15';
 
 // Public address of the portal, added as a link in notification emails.
 var PORTAL_URL = 'https://portal.cabglass.co.za';
@@ -99,6 +99,7 @@ function doPost(e) {
       case 'bulkSendIncentives':    return json_(bulkSendIncentives_(body.period, body.sentBy));
       case 'sendSalesReport':       return json_(sendSalesReport_(body.salesData, body.period, body.sentBy));
       case 'saveCommissionPeriod':  return json_(saveCommissionPeriod_(body.period, body.payload, body.updatedBy));
+      case 'clearCommissionPeriod': return json_(clearCommissionPeriod_(body.period));
       case 'sendMonthEndPayouts':   return json_(sendMonthEndPayouts_(body.period, body.payouts, body.sentBy));
       case 'sendDailyProgress':     return json_(sendDailyProgress_(body.period, body.progress, body.sentBy));
       case 'saveSettings':          return json_(saveSettings_(body.patch, body.updatedBy));
@@ -743,6 +744,19 @@ function saveCommissionPeriod_(period, payload, updatedBy) {
   sh.getRange(newRow, atCol + 1).setValue(now);
   sh.getRange(newRow, byCol + 1).setValue(updatedBy || '');
   return { ok: true };
+}
+
+// Delete all saved rows for a period (clear that month).
+function clearCommissionPeriod_(period) {
+  var sh = sheet_(COMMISSION_SHEET);
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return { ok: true, deleted: 0 };
+  var pCol = values[0].indexOf('period');
+  var key = ym_(period), deleted = 0;
+  for (var r = values.length - 1; r >= 1; r--) {
+    if (ym_(values[r][pCol]) === key) { sh.deleteRow(r + 1); deleted++; }
+  }
+  return { ok: true, deleted: deleted };
 }
 
 // Send individual month-end payout emails.
