@@ -12,6 +12,14 @@ import {
 } from '../incentiveCalc'
 import IncentiveReportTab from './IncentiveReportTab'
 
+// Working days (Mon–Fri minus SA public holidays) in a 'YYYY-MM' period.
+function monthWorkingDays(period) {
+  const [y, m] = period.split('-').map(Number)
+  const first = `${period}-01`
+  const last = `${y}-${String(m).padStart(2, '0')}-${new Date(y, m, 0).getDate()}`
+  return workingDays(first, last)
+}
+
 // Pull a DD-MM-YYYY date out of a filename → returns 'YYYY-MM-DD' or null.
 function dateFromFilename(name) {
   const m = String(name || '').match(/(\d{2})-(\d{2})-(\d{4})/)
@@ -142,6 +150,7 @@ function CommissionTab({ period, setPeriod }) {
   // Local draft state for numeric inputs (strings while editing)
   const [drafts, setDrafts]   = useState({})
   const [saving, setSaving]   = useState(false)
+  const [savingTargets, setSavingTargets] = useState(false)
   const [sending, setSending] = useState(false)
   const [toast, setToast]     = useState(null)
   const [showSetup, setShowSetup] = useState(false)
@@ -159,8 +168,15 @@ function CommissionTab({ period, setPeriod }) {
   const absVal = (uid) => d.absences?.[uid] ?? 0
   const setAbs = (uid, v) => upd({ absences: { ...(d.absences||{}), [uid]: parseNum(v) } })
 
+  // Working days are auto-calculated for the month (Mon–Fri minus SA public
+  // holidays) — kept in sync into the saved period so downstream reads match.
+  const autoWorkingDays = monthWorkingDays(period)
+  useEffect(() => {
+    if (autoWorkingDays && d.workingDays !== autoWorkingDays) updatePeriodData(period, { workingDays: autoWorkingDays })
+  }, [period, autoWorkingDays]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Derived targets
-  const branchTarget = parseNum(num('dailyTarget')) * parseNum(num('workingDays'))
+  const branchTarget = parseNum(num('dailyTarget')) * autoWorkingDays
   const bvTarget     = branchTarget - parseNum(num('bdbMonthlyTarget'))
 
   // Net turnover (per person)
@@ -184,7 +200,7 @@ function CommissionTab({ period, setPeriod }) {
   const whRate  = whPerPersonRate(netBranch)
   const wh      = parseNum(num('whHeadcount'))
   const whTotal = whRate * wh
-  const wDays   = parseNum(num('workingDays'))
+  const wDays   = autoWorkingDays
   const whDailyRate = wDays > 0 ? whRate / wDays : 0
 
   // Amy
@@ -204,6 +220,16 @@ function CommissionTab({ period, setPeriod }) {
     const res = await saveCommissionPeriod(period, me.name)
     setSaving(false)
     setToast(res?.ok ? { ok: true, msg: `Saved ${formatPeriod(period)}.` } : { ok: false, msg: res?.error || 'Save failed.' })
+  }
+
+  // Save just the monthly targets so they stay static across daily imports.
+  const handleSaveTargets = async () => {
+    ['dailyTarget', 'bdbMonthlyTarget'].forEach(k => { if (drafts[k] !== undefined) commitDraft(k) })
+    upd({ workingDays: autoWorkingDays })
+    setSavingTargets(true)
+    const res = await saveCommissionPeriod(period, me.name)
+    setSavingTargets(false)
+    setToast(res?.ok ? { ok: true, msg: `Targets saved for ${formatPeriod(period)}.` } : { ok: false, msg: res?.error || 'Save failed.' })
   }
 
   const handleSendMonthEnd = async () => {
@@ -314,28 +340,41 @@ function CommissionTab({ period, setPeriod }) {
         )}
       </div>
 
-      {/* Monthly targets */}
+      {/* Monthly targets — saved separately so they stay static all month */}
       <Card title="Monthly targets" icon={TrendingUp}>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4">
           {[
             { label: 'Daily target (R)', key: 'dailyTarget' },
-            { label: 'Working days',     key: 'workingDays', prefix: '' },
             { label: "BDB's monthly target (R)", key: 'bdbMonthlyTarget' },
-          ].map(({ label, key, prefix }) => (
+          ].map(({ label, key }) => (
             <div key={key}>
               <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">{label}</label>
               <NumInput
                 value={drafts[key] !== undefined ? drafts[key] : d[key]}
                 onChange={v => setDraft(key, v)}
                 onBlur={() => commitDraft(key)}
-                prefix={prefix !== undefined ? prefix : 'R'}
               />
             </div>
           ))}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Working days (auto)</label>
+            <div className="w-full px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700/50 text-sm text-slate-900 dark:text-slate-100">
+              {autoWorkingDays}
+            </div>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-700/30 rounded-lg p-3">
+        <div className="grid grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-700/30 rounded-lg p-3 mb-3">
           <Stat label="Total branch target" value={fmtRInt(branchTarget)} highlight />
           <Stat label="BV target (auto)" value={fmtRInt(bvTarget)} />
+        </div>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-xs text-slate-400 flex items-center gap-1.5">
+            <Info size={11}/> Working days count Mon–Fri minus SA public holidays. Save targets once — they stay fixed while you drop in the daily file.
+          </p>
+          <button onClick={handleSaveTargets} disabled={savingTargets}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-black bg-[#FECD28] hover:bg-[#f0c020] disabled:opacity-40 transition-colors">
+            <Save size={14}/> {savingTargets ? 'Saving…' : 'Save targets'}
+          </button>
         </div>
       </Card>
 
@@ -457,11 +496,11 @@ function CommissionTab({ period, setPeriod }) {
           <p className="text-xs text-slate-400 text-center py-2">Assign "Warehouse" role to employees in Team setup above.</p>
         )}
 
-        {netBranch > 0 && netBranch <= 550000 && (
-          <p className="mt-3 text-xs text-slate-400 flex items-center gap-1.5"><Info size={12}/> Net branch turnover is below R550k — no warehouse incentive this period.</p>
+        {netBranch > 0 && netBranch <= 600000 && (
+          <p className="mt-3 text-xs text-slate-400 flex items-center gap-1.5"><Info size={12}/> Net branch turnover is at or below R600k — no warehouse incentive this period.</p>
         )}
-        {netBranch > 1350000 && (
-          <p className="mt-3 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5"><Info size={12}/> Above R1.35m — using extrapolated rate (+R250 per R50k). Confirm with management.</p>
+        {netBranch > 1250000 && (
+          <p className="mt-3 text-xs text-slate-400 flex items-center gap-1.5"><Info size={12}/> Rate is capped at R4,000 per person above R1.25m.</p>
         )}
       </Card>
 
@@ -619,7 +658,7 @@ function DailyTrackerTab({ period, setPeriod }) {
   const onDragOver = (e) => e.preventDefault()
 
   const days = parseNum(daysElapsed) || 1
-  const wDays = d.workingDays || 20
+  const wDays = d.workingDays || monthWorkingDays(period)
   const bvTarget  = (d.dailyTarget || 0) * wDays - (d.bdbMonthlyTarget || 0)
   const bdbTarget = d.bdbMonthlyTarget || 0
 
@@ -648,10 +687,10 @@ function DailyTrackerTab({ period, setPeriod }) {
       {/* Context from saved targets */}
       {d.dailyTarget > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4">
-          <Stat label="Branch target" value={fmtRInt((d.dailyTarget||0)*(d.workingDays||20))} />
+          <Stat label="Branch target" value={fmtRInt((d.dailyTarget||0)*wDays)} />
           <Stat label="BV target" value={fmtRInt(bvTarget)} />
           <Stat label="BDB target" value={fmtRInt(bdbTarget)} />
-          <Stat label="Working days" value={d.workingDays || '—'} />
+          <Stat label="Working days" value={wDays || '—'} />
         </div>
       )}
       {!d.dailyTarget && (
@@ -705,7 +744,7 @@ function DailyTrackerTab({ period, setPeriod }) {
                 {[
                   bvRow  && { label: bvUser?.name  || 'BV',  cum: bvRow.cumulative,  target: bvTarget  },
                   bdbRow && { label: bdbUser?.name || 'BDB', cum: bdbRow.cumulative, target: bdbTarget },
-                  totalRow && { label: 'Grand Total (excl. Amy)', cum: totalRow.cumulative, target: (d.dailyTarget||0)*(d.workingDays||20) },
+                  totalRow && { label: 'Grand Total (excl. Amy)', cum: totalRow.cumulative, target: (d.dailyTarget||0)*wDays },
                 ].filter(Boolean).map(({ label, cum, target }) => {
                   const m = repMetrics(cum, target, days, wDays)
                   const ahead = m.delta >= 0

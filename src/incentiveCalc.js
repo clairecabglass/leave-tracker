@@ -29,25 +29,23 @@ export function branchBonus(bvGross, bdbGross, branchTarget) {
   return bvGross + bdbGross > branchTarget && branchTarget > 1000000 ? 2500 : 0
 }
 
-// Warehouse per-person rate from the official tier table (net branch turnover).
+// Warehouse per-person rate from the live spreadsheet formula (net branch turnover).
+// Nested-IF table, caps at R4,000 above R1.25m; R0 at/below R600k.
 export function whPerPersonRate(net) {
-  if (net > 1350000) return 5000 + Math.floor((net - 1350000) / 50000) * 250
-  if (net > 1300000) return 4750
-  if (net > 1250000) return 4500
-  if (net > 1200000) return 4250
-  if (net > 1150000) return 4000
-  if (net > 1100000) return 3750
-  if (net > 1050000) return 3500
-  if (net > 1000000) return 3250
-  if (net > 950000)  return 2750
-  if (net > 900000)  return 2500
-  if (net > 850000)  return 2200
-  if (net > 800000)  return 1900
-  if (net > 750000)  return 1600
-  if (net > 700000)  return 1350
-  if (net > 650000)  return 1100
-  if (net > 600000)  return 850
-  if (net > 550000)  return 600
+  if (net > 1250000) return 4000
+  if (net > 1200000) return 3750
+  if (net > 1150000) return 3500
+  if (net > 1100000) return 3250
+  if (net > 1050000) return 3000
+  if (net > 1000000) return 2750
+  if (net > 950000)  return 2500
+  if (net > 900000)  return 2200
+  if (net > 850000)  return 1900
+  if (net > 800000)  return 1600
+  if (net > 750000)  return 1350
+  if (net > 700000)  return 1100
+  if (net > 650000)  return 850
+  if (net > 600000)  return 600
   return 0
 }
 
