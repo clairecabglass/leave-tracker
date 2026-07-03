@@ -14,7 +14,7 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-07-leave-v13';
+var VERSION = '2026-07-leave-v14';
 
 // Public address of the portal, added as a link in notification emails.
 var PORTAL_URL = 'https://portal.cabglass.co.za';
@@ -420,6 +420,18 @@ function ymd_(v) {
   return s.length >= 10 ? s.slice(0, 10) : s;
 }
 
+// Normalise a period value to 'yyyy-MM'. Google Sheets coerces a typed "2026-07"
+// into a Date cell, which reads back as a long date string — this recovers the
+// canonical 'yyyy-MM' key from a Date, a date string, or an already-correct value.
+function ym_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, tz_(), 'yyyy-MM');
+  var s = String(v == null ? '' : v);
+  var m = s.match(/^(\d{4})-(\d{2})/);
+  if (m) return m[1] + '-' + m[2];
+  var d = new Date(s);
+  return isNaN(d) ? s : Utilities.formatDate(d, tz_(), 'yyyy-MM');
+}
+
 function userEmailById_(id) {
   if (id == null || id === '') return '';
   var rows = readUsers_();
@@ -697,7 +709,7 @@ function readCommissionPeriods_() {
   var rows = readObjects_(COMMISSION_SHEET);
   var result = {};
   rows.forEach(function (r) {
-    try { result[String(r.period)] = JSON.parse(String(r.payload)); } catch (e) {}
+    try { result[ym_(r.period)] = JSON.parse(String(r.payload)); } catch (e) {}
   });
   return result;
 }
@@ -714,15 +726,22 @@ function saveCommissionPeriod_(period, payload, updatedBy) {
   var byCol = header.indexOf('updatedBy');
   var payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
   var now = new Date().toISOString();
+  var key = ym_(period);
   for (var r = 1; r < values.length; r++) {
-    if (String(values[r][pCol]) === String(period)) {
+    if (ym_(values[r][pCol]) === key) {
+      // Rewrite the period cell as plain text so Sheets stops coercing it to a date.
+      sh.getRange(r + 1, pCol + 1).setNumberFormat('@').setValue(key);
       sh.getRange(r + 1, payCol + 1).setValue(payloadStr);
       sh.getRange(r + 1, atCol + 1).setValue(now);
       sh.getRange(r + 1, byCol + 1).setValue(updatedBy || '');
       return { ok: true };
     }
   }
-  sh.appendRow([period, payloadStr, now, updatedBy || '']);
+  var newRow = sh.getLastRow() + 1;
+  sh.getRange(newRow, pCol + 1).setNumberFormat('@').setValue(key); // text, not date
+  sh.getRange(newRow, payCol + 1).setValue(payloadStr);
+  sh.getRange(newRow, atCol + 1).setValue(now);
+  sh.getRange(newRow, byCol + 1).setValue(updatedBy || '');
   return { ok: true };
 }
 
