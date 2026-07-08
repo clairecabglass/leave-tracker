@@ -807,12 +807,14 @@ function sendDailyProgress_(period, progress, sentBy) {
     var projected = days > 0 ? (cum / days) * workingDays : 0;
     var daysLeft = workingDays - days;
     var newDailyRate = daysLeft > 0 ? (target - cum) / daysLeft : 0;
+    var isTotal = !!rep.isTotal;
 
+    if (isTotal) lines.push('---');
     lines.push(rep.name + ':');
     lines.push('  Cumulative: R ' + fmt_(cum));
     lines.push('  ' + (delta >= 0 ? 'Ahead' : 'Behind') + ': R ' + fmt_(Math.abs(delta)));
     lines.push('  Projected month-end: R ' + fmt_(projected));
-    lines.push('  New required daily rate: R ' + fmt_(Math.max(0, newDailyRate)));
+    if (!isTotal) lines.push('  New required daily rate: R ' + fmt_(Math.max(0, newDailyRate)));
     lines.push('');
   });
   lines.push('Portal: ' + PORTAL_URL);

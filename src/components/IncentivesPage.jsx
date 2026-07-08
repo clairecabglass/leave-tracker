@@ -737,10 +737,13 @@ function DailyTrackerTab({ period, setPeriod }) {
   const bdbRow = uploadedReps?.find(r => r.role === 'bdb')
   const totalRow = uploadedReps?.find(r => r.role === 'total')
 
+  const branchMonthlyTarget = (d.dailyTarget || 0) * wDays
+
   const handleSendDailyEmail = async () => {
     const reps = []
-    if (bvRow)  reps.push({ name: bvUser?.name || 'BV',  cumulative: bvRow.cumulative,  monthlyTarget: bvTarget,  email: bvUser?.email || '' })
-    if (bdbRow) reps.push({ name: bdbUser?.name || 'BDB', cumulative: bdbRow.cumulative, monthlyTarget: bdbTarget, email: bdbUser?.email || '' })
+    if (bvRow)    reps.push({ name: bvUser?.name || 'BV',  cumulative: bvRow.cumulative,  monthlyTarget: bvTarget,          email: bvUser?.email || '' })
+    if (bdbRow)   reps.push({ name: bdbUser?.name || 'BDB', cumulative: bdbRow.cumulative, monthlyTarget: bdbTarget,         email: bdbUser?.email || '' })
+    if (totalRow) reps.push({ name: 'Grand Total (excl. Amy)', cumulative: totalRow.cumulative, monthlyTarget: branchMonthlyTarget, email: '', isTotal: true })
     if (!reps.length) { setToast({ ok: false, msg: 'No rep data to send.' }); return }
     setSending(true)
     const res = await sendDailyProgress(period, { daysElapsed: days, workingDays: wDays, date: new Date().toISOString().slice(0,10), reps }, me.name)
