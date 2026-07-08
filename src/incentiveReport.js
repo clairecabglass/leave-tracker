@@ -237,3 +237,114 @@ export async function incentivePdfBase64(args) {
   const dataUri = doc.output('datauristring')
   return { base64: dataUri.split(',')[1], fileName }
 }
+
+// ── Daily progress PDF ────────────────────────────────────────────────────────
+// args: { period, date, daysElapsed, workingDays, reps, branchMonthlyTarget, users }
+// reps: [{ name, cumulative, monthlyTarget, isTotal? }]
+export async function downloadDailyProgressPdf({ period, date, daysElapsed, workingDays, reps, users }) {
+  const doc   = new jsPDF({ unit: 'mm', format: 'a4' })
+  const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
+  const mL = 14, mR = 14
+
+  // Top accent bar
+  doc.setFillColor(...BRAND); doc.rect(0, 0, pageW, 6, 'F')
+
+  const logo = await loadLogo()
+  if (logo) {
+    const w = 36, h = w * (logo.h / logo.w)
+    doc.addImage(logo.dataUrl, 'PNG', mL, 10, w, h)
+  }
+
+  // Title
+  doc.setTextColor(...INK); doc.setFont('helvetica', 'bold'); doc.setFontSize(18)
+  doc.text('Daily Sales Progress', pageW - mR, 18, { align: 'right' })
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...MUTED)
+
+  const MONTHS2 = ['January','February','March','April','May','June',
+                   'July','August','September','October','November','December']
+  const [py, pm] = period.split('-')
+  const periodLabel = MONTHS2[Number(pm) - 1] + ' ' + py
+  doc.text(periodLabel + '   Day ' + daysElapsed + ' of ' + workingDays, pageW - mR, 26, { align: 'right' })
+  doc.setFontSize(8)
+  doc.text('Generated ' + fmtDate(date || new Date().toISOString()), pageW - mR, 32, { align: 'right' })
+
+  // Separator
+  doc.setDrawColor(...BRAND); doc.setLineWidth(0.6)
+  doc.line(mL, 38, pageW - mR, 38)
+
+  let y = 46
+
+  // Build table rows
+  const tableRows = reps.map(function(rep) {
+    const cum    = Number(rep.cumulative)    || 0
+    const target = Number(rep.monthlyTarget) || 0
+    const daily  = workingDays > 0 ? target / workingDays : 0
+    const expected = daily * daysElapsed
+    const delta    = cum - expected
+    const projected = daysElapsed > 0 ? (cum / daysElapsed) * workingDays : 0
+    const daysLeft  = workingDays - daysElapsed
+    const newRate   = daysLeft > 0 ? Math.max(0, (target - cum) / daysLeft) : 0
+    return {
+      name:      rep.name,
+      isTotal:   !!rep.isTotal,
+      cum,
+      daily,
+      delta,
+      projected,
+      newRate,
+    }
+  })
+
+  autoTable(doc, {
+    startY: y,
+    margin: { left: mL, right: mR },
+    head: [['Rep', 'Cumulative', 'Daily target', 'Ahead / Behind', 'Projected', 'New daily rate']],
+    body: tableRows.map(function(r) {
+      return [
+        r.name,
+        fmtR(r.cum),
+        r.isTotal ? '' : fmtR(r.daily),
+        (r.delta >= 0 ? '+' : '-') + fmtR(Math.abs(r.delta)),
+        fmtR(r.projected),
+        r.isTotal ? '' : fmtR(r.newRate),
+      ]
+    }),
+    styles: { fontSize: 9, cellPadding: { top: 3.5, bottom: 3.5, left: 3, right: 3 } },
+    headStyles: { fillColor: DARK_HDR, textColor: WHITE, fontStyle: 'bold', fontSize: 8.5 },
+    columnStyles: {
+      0: { fontStyle: 'bold', cellWidth: 44 },
+      1: { halign: 'right' },
+      2: { halign: 'right', textColor: MUTED },
+      3: { halign: 'right', fontStyle: 'bold' },
+      4: { halign: 'right' },
+      5: { halign: 'right' },
+    },
+    alternateRowStyles: { fillColor: LIGHT },
+    didParseCell: function(data) {
+      const row = tableRows[data.row.index]
+      if (!row) return
+      // Grand total row gets yellow background
+      if (row.isTotal) {
+        data.cell.styles.fillColor = BRAND
+        data.cell.styles.textColor = INK
+        data.cell.styles.fontStyle = 'bold'
+      }
+      // Ahead/Behind column: green if ahead, red if behind
+      if (data.column.index === 3 && !row.isTotal && data.section === 'body') {
+        data.cell.styles.textColor = row.delta >= 0 ? [22, 163, 74] : [220, 38, 38]
+      }
+    },
+  })
+
+  // Footer
+  doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.3)
+  doc.line(mL, pageH - 14, pageW - mR, pageH - 14)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...MUTED)
+  doc.text('CabGlass — confidential.', mL, pageH - 8)
+  doc.text('Page 1 of 1', pageW - mR, pageH - 8, { align: 'right' })
+  doc.setFillColor(...BRAND); doc.rect(0, pageH - 3, pageW, 3, 'F')
+
+  const dateStr = (date || new Date().toISOString()).slice(0, 10)
+  doc.save('CabGlass-DailyProgress-' + dateStr + '.pdf')
+}

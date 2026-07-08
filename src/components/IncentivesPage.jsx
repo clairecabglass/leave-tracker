@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Gift, TrendingUp, Send, Upload, ChevronLeft, ChevronRight,
-  Check, AlertCircle, X, Info, Save, Mail, Users, Settings, FileText, Printer, Trash2,
+  Check, AlertCircle, X, Info, Save, Mail, Users, Settings, FileText, Printer, Trash2, Download,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useIncentives, defaultPeriodData } from '../context/IncentivesContext'
@@ -11,6 +11,7 @@ import {
   whPerPersonRate, amyBonus, repMetrics,
 } from '../incentiveCalc'
 import IncentiveReportTab from './IncentiveReportTab'
+import { downloadDailyProgressPdf } from '../incentiveReport'
 
 // Parse a SMART IT pivot export (xlsx/csv). Returns { reps, fileDate } or { error }.
 // Amy is excluded: her figure is subtracted from the Grand Total, then dropped.
@@ -674,6 +675,7 @@ function DailyTrackerTab({ period, setPeriod }) {
   const [uploadError, setUploadError]   = useState('')
   const [sending, setSending]           = useState(false)
   const [saving, setSaving]             = useState(false)
+  const [downloading, setDownloading]   = useState(false)
   const [toast, setToast]               = useState(null)
   const fileRef = useRef()
 
@@ -739,11 +741,28 @@ function DailyTrackerTab({ period, setPeriod }) {
 
   const branchMonthlyTarget = (d.dailyTarget || 0) * wDays
 
-  const handleSendDailyEmail = async () => {
+  const buildRepsForExport = () => {
     const reps = []
-    if (bvRow)    reps.push({ name: bvUser?.name || 'BV',  cumulative: bvRow.cumulative,  monthlyTarget: bvTarget,          email: bvUser?.email || '' })
-    if (bdbRow)   reps.push({ name: bdbUser?.name || 'BDB', cumulative: bdbRow.cumulative, monthlyTarget: bdbTarget,         email: bdbUser?.email || '' })
-    if (totalRow) reps.push({ name: 'Grand Total (excl. Amy)', cumulative: totalRow.cumulative, monthlyTarget: branchMonthlyTarget, email: '', isTotal: true })
+    if (bvRow)    reps.push({ name: bvUser?.name || 'BV',               cumulative: bvRow.cumulative,    monthlyTarget: bvTarget,             email: bvUser?.email  || '' })
+    if (bdbRow)   reps.push({ name: bdbUser?.name || 'BDB',             cumulative: bdbRow.cumulative,   monthlyTarget: bdbTarget,            email: bdbUser?.email || '' })
+    if (totalRow) reps.push({ name: 'Grand Total (excl. Amy)',           cumulative: totalRow.cumulative, monthlyTarget: branchMonthlyTarget,  email: '', isTotal: true })
+    return reps
+  }
+
+  const handleDownloadPdf = async () => {
+    const reps = buildRepsForExport()
+    if (!reps.length) { setToast({ ok: false, msg: 'No rep data to download.' }); return }
+    setDownloading(true)
+    try {
+      await downloadDailyProgressPdf({ period, date: new Date().toISOString().slice(0, 10), daysElapsed: days, workingDays: wDays, reps, users })
+    } catch (err) {
+      setToast({ ok: false, msg: 'PDF failed: ' + String(err.message || err) })
+    }
+    setDownloading(false)
+  }
+
+  const handleSendDailyEmail = async () => {
+    const reps = buildRepsForExport()
     if (!reps.length) { setToast({ ok: false, msg: 'No rep data to send.' }); return }
     setSending(true)
     const res = await sendDailyProgress(period, { daysElapsed: days, workingDays: wDays, date: new Date().toISOString().slice(0,10), reps }, me.name)
@@ -843,6 +862,10 @@ function DailyTrackerTab({ period, setPeriod }) {
             <button onClick={handleSaveMonth} disabled={saving}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-black bg-[#FECD28] hover:bg-[#f0c020] disabled:opacity-40 transition-colors">
               <Save size={14}/> {saving ? 'Saving…' : 'Save to month'}
+            </button>
+            <button onClick={handleDownloadPdf} disabled={downloading}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-black bg-[#FECD28] hover:bg-[#f0c020] disabled:opacity-40 transition-colors">
+              <Download size={14}/> {downloading ? 'Generating…' : 'Download PDF'}
             </button>
             <button onClick={handleSendDailyEmail} disabled={sending}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-slate-800 dark:bg-slate-700 hover:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-40 transition-colors">
