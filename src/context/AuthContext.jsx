@@ -121,6 +121,7 @@ export function AuthProvider({ children }) {
       startDate: data.startDate || '',
       email: (data.email || '').trim(),
       canEditMeetings: !!data.canEditMeetings,
+      payslipPassword: (data.payslipPassword || '').trim(),
     }
     // Optimistic: update the UI now, sync to the server in the background.
     setUsers(prev => [...prev, newUser])

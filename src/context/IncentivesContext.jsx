@@ -3,7 +3,7 @@ import {
   LIVE, fetchData,
   apiSetIncentive, apiBulkSendIncentives, apiSendSalesReport,
   apiSaveCommissionPeriod, apiClearCommissionPeriod, apiSendMonthEndPayouts, apiSendDailyProgress,
-  apiSaveSettings, apiSendAuditorReport,
+  apiSaveSettings, apiSendAuditorReport, apiGetPayslipPasswords, apiSendPayslips,
 } from '../api'
 
 const IncentivesContext = createContext(null)
@@ -14,7 +14,7 @@ const SETTINGS_KEY    = 'leave_settings'
 
 // Admin-configurable settings (auditor email + Pabbly mail hooks).
 export function defaultSettings() {
-  return { auditorEmail: '', incentiveHook: '', leaveHook: '' }
+  return { auditorEmail: '', incentiveHook: '', leaveHook: '', accountantEmail: '' }
 }
 
 function loadList(key) {
@@ -149,6 +149,17 @@ export function IncentivesProvider({ children }) {
     return { ok: true, sent: payouts.length, note: 'Mock mode — no emails sent.' }
   }
 
+  // Admin fetches per-user payslip passwords (to encrypt PDFs at finalise time).
+  const getPayslipPasswords = async () => {
+    if (LIVE) { const res = await apiGetPayslipPasswords(); return res?.passwords || {} }
+    return {}
+  }
+  // Email each person their encrypted payslip PDF. items = [{ email, userName, fileName, base64 }]
+  const sendPayslips = async (period, items, sentBy) => {
+    if (LIVE) return await apiSendPayslips(period, items, sentBy)
+    return { ok: true, sent: items.length, note: 'Mock mode — no emails sent.' }
+  }
+
   const sendDailyProgress = async (period, progress, sentBy) => {
     if (LIVE) return await apiSendDailyProgress(period, progress, sentBy)
     return { ok: true, sent: 0, note: 'Mock mode — no emails sent.' }
@@ -158,7 +169,7 @@ export function IncentivesProvider({ children }) {
     <IncentivesContext.Provider value={{
       incentives, saveIncentive, bulkSendIncentives, sendSalesReport, refresh,
       commissionPeriods, getPeriodData, updatePeriodData, saveCommissionPeriod, clearCommissionPeriod,
-      sendMonthEndPayouts, sendDailyProgress,
+      sendMonthEndPayouts, sendDailyProgress, getPayslipPasswords, sendPayslips,
       settings, saveSettings, sendAuditorReport,
     }}>
       {children}

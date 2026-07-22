@@ -14,7 +14,7 @@
  * → Deploy. Confirm with the `ping` action that VERSION below is live.
  */
 
-var VERSION = '2026-07-leave-v15';
+var VERSION = '2026-07-leave-v16';
 
 // Public address of the portal, added as a link in notification emails.
 var PORTAL_URL = 'https://portal.cabglass.co.za';
@@ -41,10 +41,10 @@ var COMMISSION_SHEET = 'CommissionData';
 var SETTINGS_SHEET = 'Settings';
 var SETTINGS_COLS = ['key', 'value', 'updatedAt', 'updatedBy'];
 // Keys we store in the Settings sheet (admin-configurable).
-var SETTINGS_KEYS = ['auditorEmail', 'incentiveHook', 'leaveHook'];
+var SETTINGS_KEYS = ['auditorEmail', 'incentiveHook', 'leaveHook', 'accountantEmail'];
 
 var USER_COLS = ['id', 'name', 'username', 'password', 'role', 'approverId', 'startDate',
-  'annualAdjust', 'sickAdjust', 'familyAdjust', 'email', 'canEditMeetings', 'salesTarget', 'commissionRole'];
+  'annualAdjust', 'sickAdjust', 'familyAdjust', 'email', 'canEditMeetings', 'salesTarget', 'commissionRole', 'payslipPassword'];
 var INCENTIVES_COLS = ['id', 'userId', 'userName', 'period', 'amount', 'note', 'setBy', 'setAt', 'emailedAt'];
 var COMMISSION_COLS = ['period', 'payload', 'updatedAt', 'updatedBy'];
 var MEETING_COLS = ['id', 'date', 'title', 'notes', 'createdBy', 'updatedAt'];
@@ -101,6 +101,8 @@ function doPost(e) {
       case 'saveCommissionPeriod':  return json_(saveCommissionPeriod_(body.period, body.payload, body.updatedBy));
       case 'clearCommissionPeriod': return json_(clearCommissionPeriod_(body.period));
       case 'sendMonthEndPayouts':   return json_(sendMonthEndPayouts_(body.period, body.payouts, body.sentBy));
+      case 'getPayslipPasswords':   return json_(getPayslipPasswords_());
+      case 'sendPayslips':          return json_(sendPayslips_(body.period, body.items, body.sentBy));
       case 'sendDailyProgress':     return json_(sendDailyProgress_(body.period, body.progress, body.sentBy));
       case 'saveSettings':          return json_(saveSettings_(body.patch, body.updatedBy));
       case 'sendAuditorReport':     return json_(sendAuditorReport_(body));
@@ -759,6 +761,50 @@ function clearCommissionPeriod_(period) {
   return { ok: true, deleted: deleted };
 }
 
+// Admin-only: map of userId → payslip password (for building encrypted PDFs
+// client-side at finalise time). Kept out of the normal getData payload.
+function getPayslipPasswords_() {
+  var rows = readUsers_();
+  var out = {};
+  rows.forEach(function (u) { out[String(u.id)] = u.payslipPassword ? String(u.payslipPassword) : ''; });
+  return { ok: true, passwords: out };
+}
+
+// Email each person their own password-protected payslip PDF. The email body
+// carries NO figures — the numbers live only inside the encrypted attachment.
+// items = [{ email, userName, fileName, base64 }]
+function sendPayslips_(period, items, sentBy) {
+  if (!items || !items.length) return { error: 'No payslips to send.' };
+  var label = formatPeriod_(period);
+  var key = PropertiesService.getScriptProperties().getProperty('RESEND_API_KEY');
+  var sent = 0;
+  items.forEach(function (it) {
+    if (!it.email || !it.base64) return;
+    var subject = 'Your commission payslip — ' + label;
+    var body = 'Hi ' + (it.userName || '') + ',\n\n'
+      + 'Your commission summary for ' + label + ' is attached as a password-protected PDF.\n'
+      + 'Open it with your payslip password.\n\n'
+      + 'Kind regards,\nCabGlass Management\n' + PORTAL_URL;
+    if (key) {
+      UrlFetchApp.fetch('https://api.resend.com/emails', {
+        method: 'post', contentType: 'application/json',
+        headers: { 'Authorization': 'Bearer ' + key },
+        payload: JSON.stringify({
+          from: FROM_NAME + ' <' + FROM_EMAIL + '>',
+          to: [it.email], subject: subject, text: body,
+          attachments: [{ filename: it.fileName || 'payslip.pdf', content: it.base64 }],
+        }),
+        muteHttpExceptions: true,
+      });
+    } else {
+      var blob = Utilities.newBlob(Utilities.base64Decode(it.base64), 'application/pdf', it.fileName || 'payslip.pdf');
+      MailApp.sendEmail({ to: it.email, subject: subject, body: body, attachments: [blob] });
+    }
+    sent++;
+  });
+  return { ok: true, sent: sent };
+}
+
 // Send individual month-end payout emails.
 // payouts = [{ userId, userName, email, role, breakdown, total }]
 function sendMonthEndPayouts_(period, payouts, sentBy) {
@@ -862,6 +908,8 @@ function sanitize_(u) {
     commissionRole: u.commissionRole ? String(u.commissionRole).trim() : '',
     email: u.email == null ? '' : String(u.email),
     canEditMeetings: !!u.canEditMeetings,
+    // Never expose the payslip password; just say whether one is set.
+    hasPayslipPassword: !!(u.payslipPassword && String(u.payslipPassword).trim()),
   };
 }
 

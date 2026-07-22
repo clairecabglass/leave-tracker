@@ -12,6 +12,7 @@ import {
 } from '../incentiveCalc'
 import IncentiveReportTab from './IncentiveReportTab'
 import { downloadDailyProgressPdf } from '../incentiveReport'
+import { payslipBase64 } from '../incentivePayslip'
 
 // Parse a SMART IT pivot export (xlsx/csv). Returns { reps, fileDate } or { error }.
 // Amy is excluded: her figure is subtracted from the Grand Total, then dropped.
@@ -44,10 +45,15 @@ async function parsePivotFile(file) {
     parsed.push({ rawName: nameCell, cumulative: amount, role })
   })
   if (!parsed.length) return { error: 'Could not find recognisable rep rows. Check the file matches the expected pivot format.' }
-  const amyRow = parsed.find(r => r.role === 'amy')
-  const totRow = parsed.find(r => r.role === 'total')
-  if (totRow && amyRow) totRow.cumulative = Math.max(0, totRow.cumulative - amyRow.cumulative)
-  return { reps: parsed.filter(r => r.role !== 'amy'), fileDate: dateFromFilename(file.name) }
+  // Only the two Brendons count. Everyone else (Amy, Noel, any other rows,
+  // and the file's own Grand Total) is ignored; the total is BV + BDB.
+  const bv  = parsed.find(r => r.role === 'bv')
+  const bdb = parsed.find(r => r.role === 'bdb')
+  const reps = []
+  if (bv)  reps.push(bv)
+  if (bdb) reps.push(bdb)
+  reps.push({ rawName: 'Total (Brendons)', cumulative: (bv ? bv.cumulative : 0) + (bdb ? bdb.cumulative : 0), role: 'total' })
+  return { reps, fileDate: dateFromFilename(file.name) }
 }
 
 // Working days (Mon–Fri minus SA public holidays) in a 'YYYY-MM' period.
@@ -59,10 +65,12 @@ function monthWorkingDays(period) {
 }
 
 // Pull a DD-MM-YYYY date out of a filename → returns 'YYYY-MM-DD' or null.
+// Filenames are a range ("… 01-07-2026 to 15-07-2026"), so use the LAST date
+// (the "as of" end date) — the file is cumulative up to that day.
 function dateFromFilename(name) {
-  const m = String(name || '').match(/(\d{2})-(\d{2})-(\d{4})/)
-  if (!m) return null
-  const [, dd, mm, yyyy] = m
+  const all = String(name || '').match(/(\d{2})-(\d{2})-(\d{4})/g)
+  if (!all || !all.length) return null
+  const [dd, mm, yyyy] = all[all.length - 1].split('-')
   const d = Number(dd), mo = Number(mm)
   if (d < 1 || d > 31 || mo < 1 || mo > 12) return null
   return `${yyyy}-${mm}-${dd}`
@@ -180,7 +188,7 @@ const ROLE_OPTIONS = [
 
 function CommissionTab({ period, setPeriod }) {
   const { users, user: me, updateUser } = useAuth()
-  const { getPeriodData, updatePeriodData, saveCommissionPeriod, clearCommissionPeriod, sendMonthEndPayouts } = useIncentives()
+  const { getPeriodData, updatePeriodData, saveCommissionPeriod, clearCommissionPeriod, getPayslipPasswords, sendPayslips } = useIncentives()
 
   const d   = getPeriodData(period)
   const upd = (patch) => updatePeriodData(period, patch)
@@ -351,12 +359,32 @@ function CommissionTab({ period, setPeriod }) {
     })
     if (!payouts.length) { setToast({ ok: false, msg: 'No employees have email addresses set up.' }); return }
     setSending(true)
-    const res = await sendMonthEndPayouts(period, payouts, me.name)
-    setSending(false)
-    if (res?.ok) {
-      updatePeriodData(period, { finalizedAt: new Date().toISOString(), finalizedBy: me.name })
-      setToast({ ok: true, msg: `Month-end emails sent to ${res.sent} person(s).${res.note ? ' ' + res.note : ''}` })
-    } else setToast({ ok: false, msg: res?.error || 'Send failed.' })
+    try {
+      // Each person gets their OWN password-protected PDF; numbers never appear
+      // in the email body. Anyone without an email or a payslip password is skipped.
+      const passwords = await getPayslipPasswords()
+      const items = []
+      const skipped = []
+      for (const p of payouts) {
+        const pw = passwords[p.userId] || passwords[String(p.userId)]
+        if (!p.email) { skipped.push(`${p.userName} (no email)`); continue }
+        if (!pw) { skipped.push(`${p.userName} (no payslip password)`); continue }
+        const base64 = await payslipBase64({ period, name: p.userName, role: p.role, breakdown: p.breakdown, total: p.total, password: pw })
+        items.push({ userId: p.userId, email: p.email, userName: p.userName, fileName: `Payslip-${p.userName.replace(/\s+/g, '')}-${period}.pdf`, base64 })
+      }
+      if (!items.length) {
+        setSending(false)
+        setToast({ ok: false, msg: `Nobody could be sent. Skipped: ${skipped.join(', ') || 'none'}. Set payslip passwords + emails in Admin.` })
+        return
+      }
+      const res = await sendPayslips(period, items, me.name)
+      setSending(false)
+      if (res?.ok) {
+        updatePeriodData(period, { finalizedAt: new Date().toISOString(), finalizedBy: me.name })
+        const extra = skipped.length ? ` Skipped: ${skipped.join(', ')}.` : ''
+        setToast({ ok: true, msg: `Sent ${res.sent} protected payslip(s).${extra}${res.note ? ' ' + res.note : ''}` })
+      } else setToast({ ok: false, msg: res?.error || 'Send failed.' })
+    } catch (e) { setSending(false); setToast({ ok: false, msg: 'Could not build/send payslips.' }) }
   }
 
   const handleSaveRoles = async () => {
@@ -435,7 +463,7 @@ function CommissionTab({ period, setPeriod }) {
 
       {/* Daily pivot upload — feeds turnover straight into the calcs below */}
       <Card title="Drop in the daily pivot file" icon={Upload} accent>
-        <p className="text-xs text-slate-400 mb-3">Drop today's SMART IT export (BrendonV / BrendonD / Grand Total). BV & BDB turnover fill in below and the whole breakdown updates. <span className="font-medium text-slate-500 dark:text-slate-300">Amy is excluded.</span> Re-drop any time to overwrite; hit <span className="font-medium">Save</span> to store the month.</p>
+        <p className="text-xs text-slate-400 mb-3">Drop today's SMART IT export (BrendonV / BrendonD / Grand Total). BV & BDB turnover fill in below and the whole breakdown updates. <span className="font-medium text-slate-500 dark:text-slate-300">Only the two Brendons are counted</span> — Amy, Noel and any other rows are ignored. Re-drop any time to overwrite; hit <span className="font-medium">Save</span> to store the month.</p>
         <div onDrop={e => { e.preventDefault(); handleCommUpload(e.dataTransfer.files[0]) }} onDragOver={e => e.preventDefault()}
           onClick={() => commFileRef.current?.click()}
           className="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl px-6 py-5 text-center cursor-pointer hover:border-[#FECD28] hover:bg-[#FECD28]/5 transition-colors">
@@ -451,7 +479,7 @@ function CommissionTab({ period, setPeriod }) {
             </div>
             <Stat label={`${bvUser?.name || 'BV'} turnover`} value={fmtRInt(imp.bv)} />
             <Stat label={`${bdbUser?.name || 'BDB'} turnover`} value={fmtRInt(imp.bdb)} />
-            <Stat label="Total (excl. Amy)" value={fmtRInt(imp.total)} />
+            <Stat label="Total (Brendons)" value={fmtRInt(imp.total)} />
           </div>
         )}
       </Card>
@@ -743,9 +771,9 @@ function DailyTrackerTab({ period, setPeriod }) {
 
   const buildRepsForExport = () => {
     const reps = []
-    if (bvRow)    reps.push({ name: bvUser?.name || 'BV',               cumulative: bvRow.cumulative,    monthlyTarget: bvTarget,             email: bvUser?.email  || '' })
-    if (bdbRow)   reps.push({ name: bdbUser?.name || 'BDB',             cumulative: bdbRow.cumulative,   monthlyTarget: bdbTarget,            email: bdbUser?.email || '' })
-    if (totalRow) reps.push({ name: 'Grand Total (excl. Amy)',           cumulative: totalRow.cumulative, monthlyTarget: branchMonthlyTarget,  email: '', isTotal: true })
+    if (bvRow)    reps.push({ name: bvUser?.name || 'BV',   cumulative: bvRow.cumulative,    monthlyTarget: bvTarget,             email: bvUser?.email  || '' })
+    if (bdbRow)   reps.push({ name: bdbUser?.name || 'BDB', cumulative: bdbRow.cumulative,   monthlyTarget: bdbTarget,            email: bdbUser?.email || '' })
+    if (totalRow) reps.push({ name: 'Total (Brendons)',     cumulative: totalRow.cumulative, monthlyTarget: branchMonthlyTarget,  email: '', isTotal: true })
     return reps
   }
 
@@ -808,7 +836,7 @@ function DailyTrackerTab({ period, setPeriod }) {
 
       {/* File upload */}
       <Card title="Upload SMART IT pivot export" icon={Upload}>
-        <p className="text-xs text-slate-400 mb-3">Drop the daily .xlsx pivot file (BrendonV / BrendonD / Grand Total rows). Figures are cumulative month-to-date. <span className="font-medium text-slate-500 dark:text-slate-300">Amy is excluded</span> — her turnover is removed from the Grand Total. The date is read from the filename (DD-MM-YYYY).</p>
+        <p className="text-xs text-slate-400 mb-3">Drop the daily .xlsx pivot file (BrendonV / BrendonD rows). Figures are cumulative month-to-date. <span className="font-medium text-slate-500 dark:text-slate-300">Only the two Brendons are counted</span> — Amy, Noel and any other rows are ignored. The date is read from the filename (end date, DD-MM-YYYY).</p>
         <div onDrop={onDrop} onDragOver={onDragOver} onClick={() => fileRef.current?.click()}
           className="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl px-6 py-6 text-center cursor-pointer hover:border-[#FECD28] hover:bg-[#FECD28]/5 transition-colors">
           <Upload size={22} className="mx-auto mb-2 text-slate-400"/>
@@ -837,7 +865,7 @@ function DailyTrackerTab({ period, setPeriod }) {
                 {[
                   bvRow  && { label: bvUser?.name  || 'BV',  cum: bvRow.cumulative,  target: bvTarget  },
                   bdbRow && { label: bdbUser?.name || 'BDB', cum: bdbRow.cumulative, target: bdbTarget },
-                  totalRow && { label: 'Grand Total (excl. Amy)', cum: totalRow.cumulative, target: (d.dailyTarget||0)*wDays },
+                  totalRow && { label: 'Total (Brendons)', cum: totalRow.cumulative, target: (d.dailyTarget||0)*wDays },
                 ].filter(Boolean).map(({ label, cum, target }) => {
                   const m = repMetrics(cum, target, days, wDays)
                   const ahead = m.delta >= 0

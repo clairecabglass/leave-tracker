@@ -42,6 +42,8 @@ export const apiSendSalesReport        = (salesData, period, sentBy) => apiPost(
 export const apiSaveCommissionPeriod   = (period, payload, updatedBy) => apiPost('saveCommissionPeriod', { period, payload, updatedBy })
 export const apiClearCommissionPeriod  = (period) => apiPost('clearCommissionPeriod', { period })
 export const apiSendMonthEndPayouts    = (period, payouts, sentBy) => apiPost('sendMonthEndPayouts', { period, payouts, sentBy })
+export const apiGetPayslipPasswords    = () => apiPost('getPayslipPasswords', {})
+export const apiSendPayslips           = (period, items, sentBy) => apiPost('sendPayslips', { period, items, sentBy })
 export const apiSendDailyProgress      = (period, progress, sentBy) => apiPost('sendDailyProgress', { period, progress, sentBy })
 export const apiSaveSettings           = (patch, updatedBy) => apiPost('saveSettings', { patch, updatedBy })
 export const apiSendAuditorReport      = (payload) => apiPost('sendAuditorReport', payload)

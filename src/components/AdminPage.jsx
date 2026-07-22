@@ -16,7 +16,7 @@ export default function AdminPage() {
   const [sform, setSform] = useState(settings)
   const [savingSettings, setSavingSettings] = useState(false)
   useEffect(() => { setSform(settings) }, [settings])
-  const [form, setForm] = useState({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '', canEditMeetings: false })
+  const [form, setForm] = useState({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '', canEditMeetings: false, payslipPassword: '' })
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
   const now = new Date()
@@ -41,7 +41,7 @@ export default function AdminPage() {
     setError(''); setMsg('')
     const res = await addUser(form)
     if (res.error) { setError(res.error); return }
-    setForm({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '', canEditMeetings: false })
+    setForm({ name: '', username: '', password: '', email: '', role: 'employee', approverId: '', startDate: '', canEditMeetings: false, payslipPassword: '' })
     flash(setMsg, `Added ${res.user.name}.`)
   }
 
@@ -63,7 +63,7 @@ export default function AdminPage() {
     setEdit({
       name: u.name, username: u.username, password: '', email: u.email || '',
       annualLeft: bal.annual.remaining, sickLeft: bal.sick.remaining, familyLeft: bal.family.remaining,
-      canEditMeetings: !!u.canEditMeetings,
+      canEditMeetings: !!u.canEditMeetings, payslipPassword: '', hasPayslipPassword: !!u.hasPayslipPassword,
     })
   }
 
@@ -83,6 +83,7 @@ export default function AdminPage() {
       canEditMeetings: !!edit.canEditMeetings,
     }
     if (edit.password.trim()) p.password = edit.password.trim()
+    if (edit.payslipPassword.trim()) p.payslipPassword = edit.payslipPassword.trim()
     const res = await updateUser(u.id, p)
     if (res?.error) { flash(setError, res.error); return }
     setEditing(null)
@@ -92,6 +93,8 @@ export default function AdminPage() {
   const [downloading, setDownloading] = useState(false)
   const [finalizing, setFinalizing] = useState(false)
   const [recipients, setRecipients] = useState('admin@neetlingtax.co.za')
+  // Keep the leave-report recipient in sync with the saved admin setting.
+  useEffect(() => { if (settings.accountantEmail) setRecipients(settings.accountantEmail) }, [settings.accountantEmail])
   const pl = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d) }
   const fmtD = (s) => pl(s).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' })
 
@@ -136,6 +139,7 @@ export default function AdminPage() {
       auditorEmail: (sform.auditorEmail || '').trim(),
       incentiveHook: (sform.incentiveHook || '').trim(),
       leaveHook: (sform.leaveHook || '').trim(),
+      accountantEmail: (sform.accountantEmail || '').trim(),
     }, user.name)
     setSavingSettings(false)
     if (res?.error) flash(setError, res.error)
@@ -221,6 +225,10 @@ export default function AdminPage() {
             <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Leave mail hook (Pabbly)</label>
             <input type="email" value={sform.leaveHook || ''} onChange={e => sset('leaveHook', e.target.value)} placeholder="leave@…pabbly…" className={inputCls} />
           </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Leave report email (accountants)</label>
+            <input type="email" value={sform.accountantEmail || ''} onChange={e => sset('accountantEmail', e.target.value)} placeholder="admin@neetlingtax.co.za" className={inputCls} />
+          </div>
         </div>
         <button onClick={saveSettingsNow} disabled={savingSettings} style={{ backgroundColor: '#FECD28' }}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[#111111] disabled:opacity-50 hover:brightness-95 transition-all">
@@ -250,6 +258,10 @@ export default function AdminPage() {
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Email (for notifications)</label>
             <input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="amy@cabglass.co.za" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Payslip password (opens their PDF)</label>
+            <input value={form.payslipPassword} onChange={e => set('payslipPassword', e.target.value)} placeholder="e.g. ID number" className={inputCls} />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Role</label>
@@ -401,6 +413,12 @@ export default function AdminPage() {
               <div>
                 <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">Email (for notifications)</label>
                 <input type="email" value={edit.email} onChange={e => setE('email', e.target.value)} placeholder="name@cabglass.co.za" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-1.5">
+                  Payslip password {edit.hasPayslipPassword ? <span className="text-emerald-600 dark:text-emerald-400 normal-case">· set (blank = keep)</span> : <span className="text-slate-400 normal-case">· not set</span>}
+                </label>
+                <input value={edit.payslipPassword} onChange={e => setE('payslipPassword', e.target.value)} placeholder="e.g. ID number" className={inputCls} />
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
